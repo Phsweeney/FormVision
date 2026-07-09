@@ -1,0 +1,28 @@
+[project]
+name = "formvision-backend"
+version = "1.0.0"
+description = "Computer-vision squat analysis API"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
+filterwarnings = [
+    # MediaPipe and protobuf emit deprecation noise we do not control.
+    "ignore::DeprecationWarning:google.*",
+    "ignore::DeprecationWarning:mediapipe.*",
+]
+
+[tool.ruff]
+line-length = 90
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM"]
+ignore = [
+    "B008",  # FastAPI's Depends()/File() defaults are function calls by design.
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
