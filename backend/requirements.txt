@@ -1,0 +1,27 @@
+# FormVision backend — runtime dependencies
+#
+# NOTE ON OPENCV: `opencv-python` is deliberately NOT listed here. MediaPipe
+# depends on `opencv-contrib-python`, and installing both distributions into the
+# same environment produces two competing `cv2` packages. We let MediaPipe pull
+# in its own OpenCV build and import `cv2` from that.
+
+# --- Web framework -----------------------------------------------------------
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+python-multipart==0.0.32      # required by FastAPI for multipart/form-data uploads
+
+# --- Configuration -----------------------------------------------------------
+pydantic==2.12.4
+pydantic-settings==2.14.2
+
+# --- Persistence -------------------------------------------------------------
+SQLAlchemy==2.0.51
+
+# --- Computer vision ---------------------------------------------------------
+mediapipe==0.10.35            # pulls opencv-contrib-python, numpy, protobuf
+numpy>=1.26,<3
+
+# --- Video encoding ----------------------------------------------------------
+# Ships a static ffmpeg binary so overlay videos can be encoded as H.264/yuv420p,
+# which every browser can play. OpenCV's bundled `mp4v` encoder cannot.
+imageio-ffmpeg==0.6.0
