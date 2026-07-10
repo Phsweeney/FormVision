@@ -33,6 +33,12 @@ async def lifespan(app: FastAPI):
     settings: Settings = get_settings()
     settings.ensure_directories()
 
+    # Imported lazily: keeps `import app.main` free of database side effects
+    # and avoids a circular import between the app factory and the db layer.
+    from app.db.database import init_database
+
+    init_database()
+
     logger.info(
         "%s v%s starting (environment=%s, estimator=%s, data_dir=%s)",
         settings.app_name,

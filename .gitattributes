@@ -1,0 +1,16 @@
+# Normalise line endings so the repository stores LF regardless of the OS the
+# work was done on. Without this, a Windows checkout produces a diff on every
+# file the moment it is touched.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.mp4 binary
+*.mov binary
+*.task binary
+*.woff binary
+*.woff2 binary
