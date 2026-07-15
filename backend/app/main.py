@@ -92,9 +92,13 @@ def create_app() -> FastAPI:
 
 def _register_routes(app: FastAPI) -> None:
     """Mount every route module."""
-    from app.api.routes import health
+    from app.api.routes import analysis, analyze, health, media, upload
 
     app.include_router(health.router)
+    app.include_router(upload.router)
+    app.include_router(analyze.router)
+    app.include_router(analysis.router)
+    app.include_router(media.router)
 
 
 def _register_exception_handlers(app: FastAPI) -> None:
