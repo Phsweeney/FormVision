@@ -88,15 +88,33 @@ class DepthRule(FeedbackRule):
             return None
 
         settings = context.settings
-        below_parallel = sum(1 for rep in context.reps if rep.hip_below_knee)
         total = len(context.reps)
+
+        # Count against the same standard the depth percentage is derived from.
+        # `hip_below_knee` is a different, stricter geometric test, and mixing
+        # the two in one sentence produces contradictions like "97% of target
+        # depth, reaching parallel on 0 of 5 reps".
+        on_target = sum(
+            1
+            for rep in context.reps
+            if rep.depth_percent is not None and rep.depth_percent >= 100.0
+        )
+        hips_below = sum(1 for rep in context.reps if rep.hip_below_knee)
+
+        # Mentioned only when it happened; it is extra credit beyond the target,
+        # not a second criterion the lifter is being judged against.
+        hips_note = (
+            f" Your hips passed below knee level on {hips_below} of {total}."
+            if hips_below
+            else ""
+        )
 
         if average >= settings.good_depth_percent:
             return self._item(
                 Severity.GOOD,
                 "Good squat depth",
-                f"You averaged {average:.0f}% of target depth, reaching at or below "
-                f"parallel on {below_parallel} of {total} repetitions.",
+                f"You averaged {average:.0f}% of target depth, hitting the target "
+                f"on {on_target} of {total} repetitions.{hips_note}",
                 "Squatting to at least parallel - hip crease level with the top of "
                 "the knee - trains the quadriceps and glutes through their full "
                 "range and is the standard most strength programmes assume.",
@@ -117,8 +135,8 @@ class DepthRule(FeedbackRule):
         return self._item(
             Severity.WARNING,
             "Close to full depth",
-            f"You averaged {average:.0f}% of target depth, reaching parallel on "
-            f"{below_parallel} of {total} repetitions.",
+            f"You averaged {average:.0f}% of target depth, hitting the target on "
+            f"{on_target} of {total} repetitions.{hips_note}",
             "You are near the target. Descending slightly further, or slowing the "
             "descent so you can control the bottom position, will usually close "
             "the gap.",

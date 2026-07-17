@@ -189,6 +189,34 @@ class TestDepthRule:
         assert "%" in item.message
         assert item.explanation
 
+    def test_message_does_not_contradict_itself(self, settings):
+        """The rep count must use the same standard as the percentage.
+
+        Regression: the count previously came from `hip_below_knee`, a stricter
+        geometric test than the knee-angle standard `depth_percent` is derived
+        from. That produced sentences like "97% of target depth, reaching
+        parallel on 0 of 5 repetitions" — both numbers correct, read together
+        nonsense.
+        """
+        ctx = context_for(build_squat_series(reps=5, depth_fraction=0.55), settings)
+        item = DepthRule().evaluate(ctx)
+
+        on_target = sum(1 for rep in ctx.reps if (rep.depth_percent or 0) >= 100.0)
+        assert f"{on_target} of {len(ctx.reps)}" in item.message
+        # High average depth must never be paired with a zero count.
+        if ctx.metrics.avg_depth_percent >= settings.good_depth_percent:
+            assert on_target > 0
+
+    def test_hips_below_knee_mentioned_only_when_it_happened(self, settings):
+        deep = DepthRule().evaluate(
+            context_for(build_squat_series(reps=4, depth_fraction=1.0), settings)
+        )
+        shallow = DepthRule().evaluate(
+            context_for(build_squat_series(reps=4, depth_fraction=0.55), settings)
+        )
+        assert "below knee level" in deep.message
+        assert "below knee level" not in shallow.message
+
 
 class TestForwardLeanRule:
     def test_praises_an_upright_torso(self, settings):
