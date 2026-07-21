@@ -6,8 +6,12 @@
 # Local sample footage used for manual end-to-end verification
 /samples/
 
-# Local editor/agent tooling state
+# Local developer-tooling state. These paths are named literally because an
+# ignore rule has to match the real filename to work; they are not part of the
+# project and nothing in the codebase depends on them.
 /.claude/
+/.cursor/
+/.github/copilot-instructions.md
 
 # ---------------------------------------------------------------------------
 # Python / backend
@@ -63,3 +67,8 @@ next-env.d.ts
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Assistant instruction files, kept on disk but out of the repository (see the
+# note at the top of this file about why these are named literally).
+CLAUDE.md
+AGENTS.md
