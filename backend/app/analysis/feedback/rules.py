@@ -6,15 +6,18 @@ Every threshold comes from `Settings`, so the coaching standard is
 configuration rather than code.
 
 **Every rule states its own limits.** Torso lean is only meaningful from a
-side-on camera; left/right asymmetry is only meaningful from the front. Rather
-than guess the camera angle, the messages say so. Confidently wrong coaching is
-worse than coaching that admits its assumptions.
+side-on camera; left/right asymmetry is only meaningful from the front.
+`analysis/view.py` detects which one it is, and the signal the camera cannot see
+arrives here as None — so those rules stay silent by construction rather than by
+remembering to check. `CameraViewRule` then explains the silence, because a
+measurement that is simply absent reads as a bug unless something says why.
+Confidently wrong coaching is worse than coaching that admits its assumptions.
 """
 
 from __future__ import annotations
 
 from app.analysis.feedback.base import FeedbackContext, FeedbackRule
-from app.analysis.types import FeedbackItem, Severity
+from app.analysis.types import FeedbackItem, Severity, ViewOrientation
 
 
 class NoRepsDetectedRule(FeedbackRule):
@@ -74,6 +77,59 @@ class TrackingQualityRule(FeedbackRule):
             "leaving frame, or other people in shot. Re-filming with the whole "
             "body visible will make the analysis more reliable.",
         )
+
+
+class CameraViewRule(FeedbackRule):
+    """Say which camera angle was detected, and what it can and cannot measure.
+
+    Sits just under the tracking-quality warning because it frames everything
+    below it. Without this, a torso-lean card reading "—" on front-on footage
+    looks like a broken feature rather than the honest answer: that angle does
+    not contain the information, so nothing was reported.
+    """
+
+    rule_id = "camera_view"
+    priority = 2
+
+    def evaluate(self, context: FeedbackContext) -> FeedbackItem | None:
+        view = context.angles.view
+
+        if view is ViewOrientation.SIDE:
+            return self._item(
+                Severity.INFO,
+                "Filmed from the side",
+                "Squat depth and torso lean are measured from this angle.",
+                "A side-on camera is the best view for depth and for how far "
+                "your torso pitches forward. It cannot compare your left and "
+                "right sides, because one leg is hidden behind the other — for "
+                "that, film a set from the front.",
+            )
+
+        if view is ViewOrientation.FRONT:
+            return self._item(
+                Severity.INFO,
+                "Filmed from the front",
+                "Left/right symmetry is measured from this angle; torso lean is not.",
+                "A front-on camera shows both legs separately, which is what "
+                "makes a side-to-side comparison meaningful. It sees your torso "
+                "almost edge-on, so forward lean cannot be measured from it at "
+                "all — film a set from the side for that.",
+            )
+
+        if view is ViewOrientation.OBLIQUE:
+            return self._item(
+                Severity.WARNING,
+                "Camera at an angle",
+                "The camera was neither square-on nor side-on to you, so the "
+                "measurements below are approximate.",
+                "Filming at a diagonal foreshortens everything the analysis "
+                "measures. Placing the camera directly to your side, or "
+                "directly in front, at about hip height and far enough back to "
+                "keep your whole body in frame, makes the numbers comparable "
+                "from session to session.",
+            )
+
+        return None  # UNKNOWN: tracking failed, and that rule speaks first.
 
 
 class DepthRule(FeedbackRule):
@@ -324,6 +380,7 @@ class TempoRule(FeedbackRule):
 DEFAULT_RULES: tuple[type[FeedbackRule], ...] = (
     NoRepsDetectedRule,
     TrackingQualityRule,
+    CameraViewRule,
     DepthRule,
     ForwardLeanRule,
     AsymmetryRule,

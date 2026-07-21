@@ -150,6 +150,14 @@ class MetricsSchema(BaseModel):
     tracking_quality: float = Field(
         description="Fraction of frames usable for analysis, 0-1."
     )
+    camera_view: str = Field(
+        default="unknown",
+        description=(
+            "Detected camera angle: side, front, oblique, or unknown. Explains "
+            "which measurements came back null — torso lean is not measurable "
+            "front-on, left/right asymmetry is not measurable side-on."
+        ),
+    )
 
     @classmethod
     def from_metrics(cls, metrics: Metrics) -> MetricsSchema:
@@ -172,6 +180,7 @@ class MetricsSchema(BaseModel):
             depth_consistency_percent=_round(metrics.depth_consistency_percent),
             duration_consistency_s=_round(metrics.duration_consistency_s),
             tracking_quality=round(metrics.tracking_quality, 4),
+            camera_view=metrics.camera_view.value,
         )
 
 

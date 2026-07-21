@@ -69,6 +69,7 @@ def compute_metrics(
             video_duration_s=video_duration_s,
             total_workout_time_s=0.0,
             tracking_quality=tracking_quality,
+            camera_view=angles.view,
         )
 
     depths = _collect(reps, "depth_percent")
@@ -108,13 +109,15 @@ def compute_metrics(
         depth_consistency_percent=_std(depths),
         duration_consistency_s=_std(durations),
         tracking_quality=tracking_quality,
+        camera_view=angles.view,
     )
 
     logger.info(
-        "Metrics: %d reps, avg depth %s, avg duration %.2fs, quality %.0f%%",
+        "Metrics: %d reps, avg depth %s, avg duration %.2fs, quality %.0f%%, view %s",
         metrics.total_reps,
         f"{metrics.avg_depth_percent:.0f}%" if metrics.avg_depth_percent else "n/a",
         metrics.avg_rep_duration_s or 0.0,
         tracking_quality * 100,
+        angles.view.value,
     )
     return metrics

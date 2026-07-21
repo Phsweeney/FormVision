@@ -50,6 +50,14 @@ _COLOR_WARN = (80, 120, 255)  # red-orange
 _COLOR_TEXT = (255, 255, 255)
 _COLOR_PANEL = (32, 28, 24)
 
+# Muted counterparts, used for landmarks the model is unsure of. Filmed side-on
+# the far leg is occluded and its confidence collapses; drawing it in full
+# strength would claim it was seen as clearly as the near leg, and dropping it
+# leaves the skeleton visibly missing a limb through the bottom of every rep.
+_COLOR_BONE_DIM = (120, 105, 70)
+_COLOR_JOINT_DIM = (140, 140, 140)
+_COLOR_ACCENT_DIM = (70, 120, 70)
+
 _FONT = cv2.FONT_HERSHEY_SIMPLEX
 
 
@@ -162,23 +170,42 @@ def _draw_skeleton(
 
     Landmarks are normalised to [0, 1], so they scale to the full-resolution
     frame here regardless of the (smaller) resolution inference ran at.
+
+    Two thresholds, not one. Below ``overlay_dim_visibility_threshold`` a
+    landmark is a guess and is not drawn at all. Between that and
+    ``landmark_visibility_threshold`` it is drawn dimmed: the skeleton stays
+    whole through an occluded far-side limb, while staying honest about which
+    parts of it were inferred rather than observed.
     """
-    threshold = settings.landmark_visibility_threshold
+    confident_threshold = settings.landmark_visibility_threshold
+    draw_threshold = settings.overlay_dim_visibility_threshold
+
     points: dict[int, tuple[int, int]] = {}
+    confident: set[int] = set()
 
     for i, landmark in enumerate(frame_pose.landmarks):
-        if landmark.visibility < threshold:
+        if landmark.visibility < draw_threshold:
             continue
         points[i] = (int(landmark.x * width), int(landmark.y * height))
+        if landmark.visibility >= confident_threshold:
+            confident.add(i)
 
     thickness = max(2, int(min(width, height) / 250))
     radius = max(3, int(min(width, height) / 200))
 
     for start, end in POSE_CONNECTIONS:
-        if start in points and end in points:
-            cv2.line(
-                frame, points[start], points[end], _COLOR_BONE, thickness, cv2.LINE_AA
-            )
+        if start not in points or end not in points:
+            continue
+        # A bone is only as trustworthy as its least certain end.
+        solid = start in confident and end in confident
+        cv2.line(
+            frame,
+            points[start],
+            points[end],
+            _COLOR_BONE if solid else _COLOR_BONE_DIM,
+            thickness,
+            cv2.LINE_AA,
+        )
 
     for i, point in points.items():
         # The joints that drive the analysis are highlighted; the rest are
@@ -193,11 +220,15 @@ def _draw_skeleton(
             LM.LEFT_SHOULDER,
             LM.RIGHT_SHOULDER,
         }
+        if i in confident:
+            colour = _COLOR_ACCENT if key else _COLOR_JOINT
+        else:
+            colour = _COLOR_ACCENT_DIM if key else _COLOR_JOINT_DIM
         cv2.circle(
             frame,
             point,
             radius if key else max(2, radius - 2),
-            _COLOR_ACCENT if key else _COLOR_JOINT,
+            colour,
             -1,
             cv2.LINE_AA,
         )

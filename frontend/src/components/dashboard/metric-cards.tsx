@@ -6,7 +6,25 @@ import {
   formatPercent,
   formatSeconds,
 } from "@/lib/format";
-import type { Metrics } from "@/lib/types";
+import type { CameraView, Metrics } from "@/lib/types";
+
+/**
+ * What each camera angle can and cannot measure.
+ *
+ * A card reading "—" looks like a bug unless something says why, and the reason
+ * is not a failure: the measurement is simply not present in that projection.
+ */
+const VIEW_LABEL: Record<CameraView, string> = {
+  side: "filmed from the side",
+  front: "filmed from the front",
+  oblique: "camera at an angle",
+  unknown: "camera angle unknown",
+};
+
+const LEAN_UNAVAILABLE: Partial<Record<CameraView, string>> = {
+  front: "Needs a side-on camera",
+  unknown: "Body was not tracked",
+};
 
 interface MetricCardsProps {
   metrics: Metrics;
@@ -98,7 +116,7 @@ export function MetricCards({
         detail={
           metrics.avg_torso_lean_deg !== null
             ? `${formatDegrees(metrics.avg_torso_lean_deg)} average`
-            : undefined
+            : LEAN_UNAVAILABLE[metrics.camera_view]
         }
       />
 
@@ -111,7 +129,7 @@ export function MetricCards({
       <MetricCard
         label="Tracking quality"
         value={formatPercent(quality)}
-        detail="Frames usable for analysis"
+        detail={`Frames usable · ${VIEW_LABEL[metrics.camera_view]}`}
         meter={quality}
         tone={qualityTone}
       />

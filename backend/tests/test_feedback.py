@@ -15,6 +15,7 @@ from app.analysis.feedback.engine import FeedbackEngine, generate_feedback
 from app.analysis.feedback.rules import (
     DEFAULT_RULES,
     AsymmetryRule,
+    CameraViewRule,
     ConsistencyRule,
     DepthRule,
     ForwardLeanRule,
@@ -24,7 +25,7 @@ from app.analysis.feedback.rules import (
 )
 from app.analysis.metrics import compute_metrics
 from app.analysis.reps import detect_reps
-from app.analysis.types import Severity
+from app.analysis.types import Severity, ViewOrientation
 from app.config import Settings
 from tests.synthetic import build_squat_series, build_standing_series
 
@@ -219,10 +220,21 @@ class TestDepthRule:
 
 
 class TestForwardLeanRule:
+    """Lean is measurable side-on only, so these cases film side-on.
+
+    ``test_stays_silent_on_front_on_footage`` covers the other half: from the
+    front the rule must say nothing rather than praise a torso it cannot see.
+    """
+
     def test_praises_an_upright_torso(self, settings):
         item = ForwardLeanRule().evaluate(
             context_for(
-                build_squat_series(reps=3, torso_lean_deg=8.0, bottom_lean_deg=15.0),
+                build_squat_series(
+                    reps=3,
+                    torso_lean_deg=8.0,
+                    bottom_lean_deg=15.0,
+                    view=ViewOrientation.SIDE,
+                ),
                 settings,
             )
         )
@@ -231,11 +243,31 @@ class TestForwardLeanRule:
     def test_flags_sustained_lean(self, settings):
         item = ForwardLeanRule().evaluate(
             context_for(
-                build_squat_series(reps=3, torso_lean_deg=55.0, bottom_lean_deg=65.0),
+                build_squat_series(
+                    reps=3,
+                    torso_lean_deg=55.0,
+                    bottom_lean_deg=65.0,
+                    view=ViewOrientation.SIDE,
+                ),
                 settings,
             )
         )
         assert item.severity is Severity.CRITICAL
+
+    def test_stays_silent_on_front_on_footage(self, settings):
+        """No measurement, no advice — not a cheerful default."""
+        item = ForwardLeanRule().evaluate(
+            context_for(
+                build_squat_series(
+                    reps=3,
+                    torso_lean_deg=55.0,
+                    bottom_lean_deg=65.0,
+                    view=ViewOrientation.FRONT,
+                ),
+                settings,
+            )
+        )
+        assert item is None
 
     def test_warns_when_only_the_worst_reps_lean(self, settings):
         """Average within limits but a peak beyond it: a warning, not a failure.
@@ -263,14 +295,60 @@ class TestForwardLeanRule:
         wrong about someone filming from the front."""
         item = ForwardLeanRule().evaluate(
             context_for(
-                build_squat_series(reps=3, torso_lean_deg=55.0, bottom_lean_deg=65.0),
+                build_squat_series(
+                    reps=3,
+                    torso_lean_deg=55.0,
+                    bottom_lean_deg=65.0,
+                    view=ViewOrientation.SIDE,
+                ),
                 settings,
             )
         )
         assert "side-on" in item.explanation
 
 
+class TestCameraViewRule:
+    """The rule that explains why some cards are blank."""
+
+    @pytest.mark.parametrize(
+        ("view", "severity", "expected"),
+        [
+            (ViewOrientation.SIDE, Severity.INFO, "depth"),
+            (ViewOrientation.FRONT, Severity.INFO, "symmetry"),
+            (ViewOrientation.OBLIQUE, Severity.WARNING, "approximate"),
+        ],
+    )
+    def test_reports_the_detected_angle(self, settings, view, severity, expected):
+        item = CameraViewRule().evaluate(
+            context_for(build_squat_series(reps=3, view=view), settings)
+        )
+        assert item.severity is severity
+        assert expected in item.message
+
+    def test_silent_when_the_view_could_not_be_determined(self, settings):
+        """Tracking failed outright; the tracking rule is the one to speak."""
+        context = context_for(build_squat_series(reps=3), settings)
+        context.angles.view = ViewOrientation.UNKNOWN
+        assert CameraViewRule().evaluate(context) is None
+
+
 class TestAsymmetryRule:
+    def test_stays_silent_on_side_on_footage(self, settings):
+        """Side-on, the far leg is occluded and the comparison is noise.
+
+        Left ungated this reported roughly 38 degrees of asymmetry on real
+        footage with none, which would have read as a serious weight shift.
+        """
+        item = AsymmetryRule().evaluate(
+            context_for(
+                build_squat_series(
+                    reps=3, view=ViewOrientation.SIDE, far_side_visibility=0.4
+                ),
+                settings,
+            )
+        )
+        assert item is None
+
     def test_praises_a_balanced_squat(self, settings):
         item = AsymmetryRule().evaluate(context_for(build_squat_series(reps=3), settings))
         assert item.severity is Severity.GOOD
@@ -373,8 +451,11 @@ class TestEngine:
             settings,
         )
         items = generate_feedback(ctx.reps, ctx.metrics, ctx.angles, settings)
-        assert items
-        assert all(item.severity is Severity.GOOD for item in items)
+        # The camera-view note is orientation metadata, not a verdict on the
+        # set, so it is excluded rather than counted as a non-praise item.
+        judgements = [item for item in items if item.rule_id != "camera_view"]
+        assert judgements
+        assert all(item.severity is Severity.GOOD for item in judgements)
 
     def test_problems_are_listed_before_praise(self, settings):
         ctx = context_for(

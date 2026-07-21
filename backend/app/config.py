@@ -111,6 +111,28 @@ class Settings(BaseSettings):
         description="Fraction of usable frames below which results are flagged.",
     )
 
+    # -- Camera view detection -----------------------------------------------
+    # Shoulder separation divided by torso length: scale-free, so it is
+    # independent of camera distance and body size. Measured across the sample
+    # footage, the two orientations are nowhere near each other — 0.06 to 0.07
+    # filmed side-on, 0.40 to 1.27 filmed front-on — so these thresholds sit in
+    # a wide empty band rather than on a knife edge.
+    view_side_max_shoulder_ratio: float = Field(
+        default=0.20,
+        description=(
+            "Shoulder separation, in torso lengths, at or below which the "
+            "camera is treated as side-on. Side-on clips measure around 0.06."
+        ),
+    )
+    view_front_min_shoulder_ratio: float = Field(
+        default=0.32,
+        description=(
+            "Shoulder separation, in torso lengths, at or above which the "
+            "camera is treated as front-on. Front-on clips measure 0.40 and up. "
+            "Between the two thresholds the view is reported as oblique."
+        ),
+    )
+
     # -- Signal processing ---------------------------------------------------
     smoothing_window_seconds: float = Field(
         default=0.15,
@@ -190,6 +212,17 @@ class Settings(BaseSettings):
         description="Reps quicker than this on average are called rushed.",
     )
 
+    # -- Overlay rendering ---------------------------------------------------
+    overlay_dim_visibility_threshold: float = Field(
+        default=0.10,
+        description=(
+            "Landmarks below this visibility are not drawn at all. Between this "
+            "and landmark_visibility_threshold they are drawn dimmed, which is "
+            "how an occluded far-side limb stays on screen without pretending "
+            "to be as well observed as the near side."
+        ),
+    )
+
     # -- API response shaping ------------------------------------------------
     max_series_points: int = Field(
         default=600,
@@ -228,6 +261,30 @@ class Settings(BaseSettings):
             raise ValueError(
                 "parallel_knee_angle_deg must be smaller than "
                 "standing_knee_angle_deg (knees bend to a smaller angle)"
+            )
+        return value
+
+    @field_validator("view_front_min_shoulder_ratio")
+    @classmethod
+    def _front_above_side(cls, value: float, info) -> float:
+        side = info.data.get("view_side_max_shoulder_ratio")
+        if side is not None and value <= side:
+            raise ValueError(
+                "view_front_min_shoulder_ratio must be larger than "
+                "view_side_max_shoulder_ratio; the gap between them is the "
+                "band classified as oblique"
+            )
+        return value
+
+    @field_validator("overlay_dim_visibility_threshold")
+    @classmethod
+    def _dim_below_visible(cls, value: float, info) -> float:
+        visible = info.data.get("landmark_visibility_threshold")
+        if visible is not None and value > visible:
+            raise ValueError(
+                "overlay_dim_visibility_threshold must not exceed "
+                "landmark_visibility_threshold, or confidently-detected "
+                "landmarks would be dropped from the overlay entirely"
             )
         return value
 

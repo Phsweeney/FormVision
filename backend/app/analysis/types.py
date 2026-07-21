@@ -44,15 +44,32 @@ class PoseLandmarkIndex(IntEnum):
     RIGHT_FOOT_INDEX = 32
 
 
-#: Landmarks that must be visible for a frame to be usable for squat analysis.
-REQUIRED_LANDMARKS: tuple[PoseLandmarkIndex, ...] = (
+#: Landmarks required in every usable frame, whatever the camera angle. The
+#: shoulders and hips are the one group that survives occlusion: filmed side-on
+#: they still report ~0.99 visibility, because even the far one sits at the
+#: silhouette edge rather than behind the body.
+CORE_LANDMARKS: tuple[PoseLandmarkIndex, ...] = (
     PoseLandmarkIndex.LEFT_SHOULDER,
     PoseLandmarkIndex.RIGHT_SHOULDER,
     PoseLandmarkIndex.LEFT_HIP,
     PoseLandmarkIndex.RIGHT_HIP,
+)
+
+#: The legs, per side. A usable frame needs *one* of these complete, not both.
+#:
+#: Demanding both is what made side-on footage unusable. Filmed from the side
+#: the far leg is hidden behind the near one, and MediaPipe drops its confidence
+#: accordingly — measured at 0.40 for the far knee against 0.93 for the near one
+#: — even though the coordinates it returns are good, agreeing with the near
+#: leg's knee angle to within a few degrees. Requiring both sides therefore
+#: discarded ~83% of a perfectly clear side-on clip on a confidence score, not
+#: on anything actually wrong with the data.
+LEFT_LEG_LANDMARKS: tuple[PoseLandmarkIndex, ...] = (
     PoseLandmarkIndex.LEFT_KNEE,
-    PoseLandmarkIndex.RIGHT_KNEE,
     PoseLandmarkIndex.LEFT_ANKLE,
+)
+RIGHT_LEG_LANDMARKS: tuple[PoseLandmarkIndex, ...] = (
+    PoseLandmarkIndex.RIGHT_KNEE,
     PoseLandmarkIndex.RIGHT_ANKLE,
 )
 
@@ -109,6 +126,24 @@ class Severity(StrEnum):
     INFO = "info"
     WARNING = "warning"
     CRITICAL = "critical"
+
+
+class ViewOrientation(StrEnum):
+    """Where the camera stood relative to the lifter.
+
+    This is not cosmetic: it decides which measurements mean anything. A 2D
+    analysis can only see what the image plane shows, so torso lean is
+    measurable side-on and left/right asymmetry front-on, and each is noise
+    from the other angle. Detecting the view lets the pipeline return `None`
+    for what it cannot see rather than a confident number that is wrong.
+    """
+
+    SIDE = "side"
+    FRONT = "front"
+    #: Somewhere between the two — neither measurement is fully trustworthy.
+    OBLIQUE = "oblique"
+    #: The subject was never tracked well enough to tell.
+    UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True, slots=True)
@@ -210,13 +245,24 @@ class AngleSeries:
     #: has dropped to or below knee level, i.e. at or past parallel.
     hip_knee_offset: list[float | None] = field(default_factory=list)
 
-    #: True where every landmark needed for squat analysis was visible.
+    #: True where enough landmarks were visible to analyse the frame: the core
+    #: torso points plus at least one complete leg.
     valid: list[bool] = field(default_factory=list)
+
+    #: Per-side leg visibility. Tracked separately from `valid` because side-on
+    #: footage is analysable on one leg, and knowing *which* legs were seen is
+    #: what tells the rest of the pipeline whether a left/right comparison is
+    #: meaningful.
+    left_leg_valid: list[bool] = field(default_factory=list)
+    right_leg_valid: list[bool] = field(default_factory=list)
 
     #: Median torso length in normalised units; the scale reference for the
     #: whole clip. None when the subject was never tracked well enough.
     torso_scale: float | None = None
     thigh_scale: float | None = None
+
+    #: Where the camera stood. Signals this angle cannot measure are `None`.
+    view: ViewOrientation = ViewOrientation.UNKNOWN
 
     def __len__(self) -> int:
         return len(self.timestamps_s)
@@ -227,6 +273,20 @@ class AngleSeries:
         if not self.valid:
             return 0.0
         return sum(self.valid) / len(self.valid)
+
+    @property
+    def left_leg_coverage(self) -> float:
+        """Share of frames in which the left leg was independently tracked."""
+        if not self.left_leg_valid:
+            return 0.0
+        return sum(self.left_leg_valid) / len(self.left_leg_valid)
+
+    @property
+    def right_leg_coverage(self) -> float:
+        """Share of frames in which the right leg was independently tracked."""
+        if not self.right_leg_valid:
+            return 0.0
+        return sum(self.right_leg_valid) / len(self.right_leg_valid)
 
     @property
     def mean_knee_deg(self) -> list[float | None]:
@@ -314,6 +374,10 @@ class Metrics:
     duration_consistency_s: float | None = None
 
     tracking_quality: float = 0.0
+
+    #: The camera angle the clip was filmed from. Explains why the measurements
+    #: that angle cannot see came back as None.
+    camera_view: ViewOrientation = ViewOrientation.UNKNOWN
 
 
 @dataclass(frozen=True, slots=True)

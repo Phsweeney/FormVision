@@ -11,6 +11,7 @@ import pytest
 
 from app.analysis.angles import compute_angles
 from app.analysis.reps import detect_reps
+from app.analysis.types import ViewOrientation
 from app.config import Settings
 from tests.synthetic import build_squat_series, build_standing_series
 
@@ -155,7 +156,12 @@ class TestRepMeasurements:
         """Worst-case, not average: upright at the top and folded at the bottom
         is a lean problem that averaging would conceal."""
         angles = compute_angles(
-            build_squat_series(reps=2, torso_lean_deg=8.0, bottom_lean_deg=55.0),
+            build_squat_series(
+                reps=2,
+                torso_lean_deg=8.0,
+                bottom_lean_deg=55.0,
+                view=ViewOrientation.SIDE,
+            ),
             settings,
         )
         for rep in detect_reps(angles, settings):
@@ -170,6 +176,25 @@ class TestRepMeasurements:
         angles = compute_angles(build_squat_series(reps=2), settings)
         for rep in detect_reps(angles, settings):
             assert rep.knee_asymmetry_deg < 1.0
+
+    def test_asymmetry_is_unmeasured_side_on(self, settings):
+        """One leg hides the other, so there is nothing to compare it against.
+
+        The far leg is tracked in a small, noisy fraction of frames; treating
+        that as a left/right difference invented ~38 degrees of asymmetry on
+        real footage that had none.
+        """
+        angles = compute_angles(
+            build_squat_series(
+                reps=2, view=ViewOrientation.SIDE, far_side_visibility=0.4
+            ),
+            settings,
+        )
+        reps = detect_reps(angles, settings)
+        assert reps
+        assert all(rep.knee_asymmetry_deg is None for rep in reps)
+        # Depth still comes through — it only ever needed one leg.
+        assert all(rep.depth_percent is not None for rep in reps)
 
 
 class TestRobustness:

@@ -91,7 +91,18 @@ export interface Metrics {
 
   /** Fraction of frames usable for analysis, 0–1. */
   tracking_quality: number;
+
+  /**
+   * Which camera angle the clip was filmed from.
+   *
+   * Explains the nulls above rather than decorating them: a 2D analysis cannot
+   * see forward lean from the front, nor compare left against right from the
+   * side, so whichever one the camera missed comes back null by design.
+   */
+  camera_view: CameraView;
 }
+
+export type CameraView = "side" | "front" | "oblique" | "unknown";
 
 export interface FeedbackItem {
   /** Stable identifier — safe to key UI logic on, unlike the message text. */

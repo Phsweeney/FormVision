@@ -12,7 +12,7 @@ import pytest
 from app.analysis.angles import compute_angles
 from app.analysis.metrics import compute_metrics
 from app.analysis.reps import detect_reps
-from app.analysis.types import AngleSeries
+from app.analysis.types import AngleSeries, ViewOrientation
 from app.config import Settings
 from tests.synthetic import build_squat_series, build_standing_series
 
@@ -177,15 +177,35 @@ class TestConsistency:
 class TestFormMetrics:
     def test_lean_is_aggregated(self, settings):
         _, _, metrics = analyse(
-            build_squat_series(reps=3, torso_lean_deg=10.0, bottom_lean_deg=50.0),
+            build_squat_series(
+                reps=3,
+                torso_lean_deg=10.0,
+                bottom_lean_deg=50.0,
+                view=ViewOrientation.SIDE,
+            ),
             settings,
         )
         assert metrics.max_torso_lean_deg > 40.0
         assert metrics.avg_torso_lean_deg is not None
 
     def test_max_lean_is_at_least_the_average(self, settings):
-        _, _, metrics = analyse(build_squat_series(reps=4), settings)
+        _, _, metrics = analyse(
+            build_squat_series(reps=4, view=ViewOrientation.SIDE), settings
+        )
         assert metrics.max_torso_lean_deg >= metrics.avg_torso_lean_deg
+
+    def test_the_detected_camera_view_is_carried_through(self, settings):
+        """The dashboard needs it to explain the measurements that are absent."""
+        _, _, side = analyse(
+            build_squat_series(reps=3, view=ViewOrientation.SIDE), settings
+        )
+        _, _, front = analyse(
+            build_squat_series(reps=3, view=ViewOrientation.FRONT), settings
+        )
+        assert side.camera_view is ViewOrientation.SIDE
+        assert side.avg_knee_asymmetry_deg is None
+        assert front.camera_view is ViewOrientation.FRONT
+        assert front.avg_torso_lean_deg is None
 
     def test_asymmetry_is_aggregated(self, settings):
         _, _, symmetric = analyse(build_squat_series(reps=3), settings)

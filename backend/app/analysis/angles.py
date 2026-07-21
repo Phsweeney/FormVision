@@ -23,19 +23,22 @@ import numpy as np
 from app.analysis.geometry import (
     angle_from_vertical,
     joint_angle,
-    midpoint,
 )
 from app.analysis.smoothing import smooth_series
 from app.analysis.types import (
-    REQUIRED_LANDMARKS,
+    CORE_LANDMARKS,
+    LEFT_LEG_LANDMARKS,
+    RIGHT_LEG_LANDMARKS,
     AngleSeries,
     FramePose,
     Landmark,
     PoseSeries,
+    ViewOrientation,
 )
 from app.analysis.types import (
     PoseLandmarkIndex as LM,
 )
+from app.analysis.view import detect_view
 from app.config import Settings
 from app.logging_config import get_logger
 
@@ -50,11 +53,49 @@ def _visible(frame: FramePose, index: LM, threshold: float) -> Landmark | None:
     return landmark
 
 
+def _group_visible(frame: FramePose, group: tuple[LM, ...], threshold: float) -> bool:
+    """True when every landmark in ``group`` is confidently visible."""
+    return all(_visible(frame, index, threshold) is not None for index in group)
+
+
 def _frame_is_usable(frame: FramePose, threshold: float) -> bool:
-    """True when every landmark squat analysis needs is confidently visible."""
-    return all(
-        _visible(frame, index, threshold) is not None for index in REQUIRED_LANDMARKS
+    """True when there is enough of the body to analyse the frame.
+
+    The core torso points, plus **at least one** complete leg — not both.
+    Requiring both is what made side-on footage unusable: the far leg is hidden
+    behind the near one, so MediaPipe reports low confidence for it and ~83% of
+    an otherwise clean clip was discarded. One leg is all a squat needs, and
+    side-on it is the only one there is.
+    """
+    return _group_visible(frame, CORE_LANDMARKS, threshold) and (
+        _group_visible(frame, LEFT_LEG_LANDMARKS, threshold)
+        or _group_visible(frame, RIGHT_LEG_LANDMARKS, threshold)
     )
+
+
+def _pair_point(
+    frame: FramePose, left: LM, right: LM, threshold: float
+) -> tuple[float, float] | None:
+    """Midpoint of a left/right landmark pair, or the one side that is visible.
+
+    Falling back to a single side is not an approximation forced on us — filmed
+    side-on the two landmarks project to nearly the same image point, so the
+    visible one *is* the midpoint to within the noise. It is what lets every
+    downstream signal keep working on footage where only one side is tracked.
+    """
+    left_landmark = _visible(frame, left, threshold)
+    right_landmark = _visible(frame, right, threshold)
+
+    if left_landmark is not None and right_landmark is not None:
+        return (
+            (left_landmark.x + right_landmark.x) / 2.0,
+            (left_landmark.y + right_landmark.y) / 2.0,
+        )
+    if left_landmark is not None:
+        return (left_landmark.x, left_landmark.y)
+    if right_landmark is not None:
+        return (right_landmark.x, right_landmark.y)
+    return None
 
 
 def _compute_scales(
@@ -74,16 +115,12 @@ def _compute_scales(
         if not _frame_is_usable(frame, threshold):
             continue
 
-        left_shoulder = frame.get(LM.LEFT_SHOULDER)
-        right_shoulder = frame.get(LM.RIGHT_SHOULDER)
-        left_hip = frame.get(LM.LEFT_HIP)
-        right_hip = frame.get(LM.RIGHT_HIP)
-        left_knee = frame.get(LM.LEFT_KNEE)
-        right_knee = frame.get(LM.RIGHT_KNEE)
+        shoulder_mid = _pair_point(frame, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER, threshold)
+        hip_mid = _pair_point(frame, LM.LEFT_HIP, LM.RIGHT_HIP, threshold)
+        knee_mid = _pair_point(frame, LM.LEFT_KNEE, LM.RIGHT_KNEE, threshold)
 
-        shoulder_mid = midpoint(left_shoulder, right_shoulder)
-        hip_mid = midpoint(left_hip, right_hip)
-        knee_mid = midpoint(left_knee, right_knee)
+        if shoulder_mid is None or hip_mid is None or knee_mid is None:
+            continue
 
         torso_lengths.append(float(np.hypot(*np.subtract(shoulder_mid, hip_mid))))
         thigh_lengths.append(float(np.hypot(*np.subtract(hip_mid, knee_mid))))
@@ -110,13 +147,25 @@ def compute_angles(series: PoseSeries, settings: Settings) -> AngleSeries:
     """
     threshold = settings.landmark_visibility_threshold
     torso_scale, thigh_scale = _compute_scales(series, threshold)
+    view = detect_view(series, settings)
 
-    result = AngleSeries(torso_scale=torso_scale, thigh_scale=thigh_scale)
+    result = AngleSeries(torso_scale=torso_scale, thigh_scale=thigh_scale, view=view)
+
+    # Filmed front-on, the torso hinges almost directly toward the lens, so its
+    # inclination barely projects into the image at all — real footage measures
+    # around 1 degree however hard the lifter folds. That is not a good torso
+    # position, it is the absence of a measurement, so it is recorded as one.
+    lean_is_measurable = view is not ViewOrientation.FRONT
 
     for frame in series.frames:
         result.timestamps_s.append(frame.timestamp_s)
         usable = _frame_is_usable(frame, threshold)
+        left_leg = usable and _group_visible(frame, LEFT_LEG_LANDMARKS, threshold)
+        right_leg = usable and _group_visible(frame, RIGHT_LEG_LANDMARKS, threshold)
+
         result.valid.append(usable)
+        result.left_leg_valid.append(left_leg)
+        result.right_leg_valid.append(right_leg)
 
         if not usable:
             result.left_knee_deg.append(None)
@@ -127,24 +176,31 @@ def compute_angles(series: PoseSeries, settings: Settings) -> AngleSeries:
             result.hip_knee_offset.append(None)
             continue
 
-        left_shoulder = frame.get(LM.LEFT_SHOULDER)
-        right_shoulder = frame.get(LM.RIGHT_SHOULDER)
-        left_hip = frame.get(LM.LEFT_HIP)
-        right_hip = frame.get(LM.RIGHT_HIP)
-        left_knee = frame.get(LM.LEFT_KNEE)
-        right_knee = frame.get(LM.RIGHT_KNEE)
-        left_ankle = frame.get(LM.LEFT_ANKLE)
-        right_ankle = frame.get(LM.RIGHT_ANKLE)
-
         # Knee: angle at the knee between the thigh and the shin. ~180 when the
-        # leg is locked out, falling as the lifter descends.
-        result.left_knee_deg.append(joint_angle(left_hip, left_knee, left_ankle))
-        result.right_knee_deg.append(joint_angle(right_hip, right_knee, right_ankle))
+        # leg is locked out, falling as the lifter descends. Measured per leg
+        # from that leg's own landmarks, so an occluded side goes missing on its
+        # own rather than taking the frame down with it.
+        result.left_knee_deg.append(
+            joint_angle(
+                frame.get(LM.LEFT_HIP), frame.get(LM.LEFT_KNEE), frame.get(LM.LEFT_ANKLE)
+            )
+            if left_leg
+            else None
+        )
+        result.right_knee_deg.append(
+            joint_angle(
+                frame.get(LM.RIGHT_HIP),
+                frame.get(LM.RIGHT_KNEE),
+                frame.get(LM.RIGHT_ANKLE),
+            )
+            if right_leg
+            else None
+        )
 
-        shoulder_mid = midpoint(left_shoulder, right_shoulder)
-        hip_mid = midpoint(left_hip, right_hip)
-        knee_mid = midpoint(left_knee, right_knee)
-        ankle_mid = midpoint(left_ankle, right_ankle)
+        shoulder_mid = _pair_point(frame, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER, threshold)
+        hip_mid = _pair_point(frame, LM.LEFT_HIP, LM.RIGHT_HIP, threshold)
+        knee_mid = _pair_point(frame, LM.LEFT_KNEE, LM.RIGHT_KNEE, threshold)
+        ankle_mid = _pair_point(frame, LM.LEFT_ANKLE, LM.RIGHT_ANKLE, threshold)
 
         # Hip: angle at the hip between the torso and the thigh. Closes as the
         # lifter hinges forward and down.
@@ -152,7 +208,9 @@ def compute_angles(series: PoseSeries, settings: Settings) -> AngleSeries:
 
         # Torso lean from vertical. 0 is upright; larger means more forward
         # inclination. Only meaningful from a side-on camera.
-        result.torso_lean_deg.append(angle_from_vertical(hip_mid, shoulder_mid))
+        result.torso_lean_deg.append(
+            angle_from_vertical(hip_mid, shoulder_mid) if lean_is_measurable else None
+        )
 
         # Hip height above the ankles, in torso lengths. Image y grows downward,
         # so `ankle_y - hip_y` is positive when the hip is above the ankles.
@@ -171,9 +229,13 @@ def compute_angles(series: PoseSeries, settings: Settings) -> AngleSeries:
     _smooth_in_place(result, series.metadata.fps, settings)
 
     logger.info(
-        "Angles computed for %d frames (%.1f%% usable, torso_scale=%s)",
+        "Angles computed for %d frames (%.1f%% usable, legs L/R %.0f%%/%.0f%%, "
+        "view=%s, torso_scale=%s)",
         len(result),
         result.valid_fraction * 100,
+        result.left_leg_coverage * 100,
+        result.right_leg_coverage * 100,
+        view.value,
         f"{torso_scale:.4f}" if torso_scale else "unmeasurable",
     )
     return result

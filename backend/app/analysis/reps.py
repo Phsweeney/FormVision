@@ -23,7 +23,7 @@ from enum import Enum, auto
 
 from app.analysis.geometry import linear_scale
 from app.analysis.smoothing import percentile
-from app.analysis.types import AngleSeries, Rep
+from app.analysis.types import AngleSeries, Rep, ViewOrientation
 from app.config import Settings
 from app.logging_config import get_logger
 
@@ -205,9 +205,15 @@ def _build_rep(
     knee_values = [v for v in (left_at_bottom, right_at_bottom) if v is not None]
     min_knee = min(knee_values) if knee_values else None
 
+    # Asymmetry needs a front-on camera. Side-on, the far leg is occluded and
+    # tracked in a small, noisy fraction of frames — comparing it against the
+    # near leg produced ~38 degrees of "asymmetry" on footage with none, which
+    # is worse than saying nothing.
     asymmetry = (
         abs(left_at_bottom - right_at_bottom)
-        if left_at_bottom is not None and right_at_bottom is not None
+        if angles.view is ViewOrientation.FRONT
+        and left_at_bottom is not None
+        and right_at_bottom is not None
         else None
     )
 

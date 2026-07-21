@@ -129,6 +129,15 @@ class TestAnalysisResults:
         for section in ("video", "metrics", "reps", "feedback", "series"):
             assert analysed[section] is not None, f"{section} missing"
 
+    def test_reports_the_camera_view(self, analysed):
+        """The dashboard needs it to explain which cards are blank and why."""
+        assert analysed["metrics"]["camera_view"] in {
+            "side",
+            "front",
+            "oblique",
+            "unknown",
+        }
+
     def test_reps_are_fully_described(self, analysed):
         assert len(analysed["reps"]) == 3
         for rep in analysed["reps"]:
