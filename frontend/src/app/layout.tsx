@@ -42,7 +42,7 @@ export default function RootLayout({
         <SiteHeader />
         <main className="flex-1">{children}</main>
         <footer className="border-border/60 text-muted-foreground border-t px-6 py-6 text-center text-xs">
-          FormVision V1 · Back squat analysis · Rule-based, no machine learning
+          FormVision V1 · Back squat analysis
         </footer>
       </body>
     </html>
