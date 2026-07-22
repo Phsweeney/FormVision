@@ -22,6 +22,7 @@ class TestHealth:
         paths = client.get("/openapi.json").json()["paths"]
         for expected in (
             "/health",
+            "/config",
             "/upload",
             "/analyze",
             "/analysis/{analysis_id}",
@@ -29,6 +30,39 @@ class TestHealth:
             "/overlay/{analysis_id}",
         ):
             assert expected in paths, f"{expected} missing from the OpenAPI schema"
+
+
+class TestConfig:
+    def test_exposes_analysis_thresholds(self, client):
+        body = client.get("/config").json()
+        # A representative field from each group the live client consumes.
+        for key in (
+            "parallel_knee_angle_deg",
+            "rep_descent_fraction",
+            "smoothing_window_seconds",
+            "view_front_min_shoulder_ratio",
+            "max_knee_asymmetry_deg",
+            "live_calibration_seconds",
+            "coaching_cooldown_s",
+        ):
+            assert key in body, f"{key} missing from /config"
+
+    def test_values_match_the_settings_singleton(self, client, isolated_settings):
+        """The endpoint must be a faithful projection of config.py, not a copy
+        with a life of its own."""
+        body = client.get("/config").json()
+        assert (
+            body["parallel_knee_angle_deg"] == isolated_settings.parallel_knee_angle_deg
+        )
+        assert body["rep_descent_fraction"] == isolated_settings.rep_descent_fraction
+        assert body["coaching_cooldown_s"] == isolated_settings.coaching_cooldown_s
+
+    def test_does_not_leak_operational_settings(self, client):
+        """Only analysis thresholds are public; storage paths and model URLs
+        are not."""
+        body = client.get("/config").json()
+        for secret in ("data_dir", "database_url", "pose_model_url", "cors_origins"):
+            assert secret not in body
 
 
 class TestUpload:

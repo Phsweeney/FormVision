@@ -212,6 +212,39 @@ class Settings(BaseSettings):
         description="Reps quicker than this on average are called rushed.",
     )
 
+    # -- Live coaching (webcam mode) ----------------------------------------
+    # These govern the real-time mode only. The offline upload pipeline never
+    # reads them; they are surfaced to the browser through GET /config so the
+    # client analysis engine and this server share one source of truth for
+    # every threshold (the no-magic-numbers rule, extended to the client).
+    live_calibration_seconds: float = Field(
+        default=2.5,
+        description=(
+            "How long the lifter stands still at the start of a live session so "
+            "the client can measure a standing hip-height baseline and body "
+            "scale before any rep is counted. The offline pipeline derives these "
+            "from the whole clip; live has no whole clip, so it calibrates."
+        ),
+    )
+    bottom_pause_brief_s: float = Field(
+        default=0.3,
+        description=(
+            "A pause at the bottom at or above this, but below "
+            "bottom_pause_competition_s, is classified as a brief pause."
+        ),
+    )
+    bottom_pause_competition_s: float = Field(
+        default=1.0,
+        description="A bottom pause at or above this is a full competition pause.",
+    )
+    coaching_cooldown_s: float = Field(
+        default=4.0,
+        description=(
+            "Minimum time between two spoken/visible cues of the same kind. "
+            "Stops the live coach repeating 'go deeper' every frame."
+        ),
+    )
+
     # -- Overlay rendering ---------------------------------------------------
     overlay_dim_visibility_threshold: float = Field(
         default=0.10,
@@ -285,6 +318,17 @@ class Settings(BaseSettings):
                 "overlay_dim_visibility_threshold must not exceed "
                 "landmark_visibility_threshold, or confidently-detected "
                 "landmarks would be dropped from the overlay entirely"
+            )
+        return value
+
+    @field_validator("bottom_pause_competition_s")
+    @classmethod
+    def _competition_above_brief(cls, value: float, info) -> float:
+        brief = info.data.get("bottom_pause_brief_s")
+        if brief is not None and value <= brief:
+            raise ValueError(
+                "bottom_pause_competition_s must be larger than "
+                "bottom_pause_brief_s; the gap between them is the brief-pause band"
             )
         return value
 
