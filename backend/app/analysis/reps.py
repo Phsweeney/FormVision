@@ -205,15 +205,22 @@ def _build_rep(
     knee_values = [v for v in (left_at_bottom, right_at_bottom) if v is not None]
     min_knee = min(knee_values) if knee_values else None
 
+    # Asymmetry is the worst instantaneous gap between the two knees across the
+    # rep, not the gap between each leg's independent minimum. Each leg reaches
+    # its deepest point at a slightly different frame, so differencing the two
+    # minima cancels a genuine one-sided shift: a lifter visibly loading one leg
+    # measured 0.2 degrees of "asymmetry" that way, because both knees passed
+    # through the same minimum at different moments. Comparing frame by frame and
+    # keeping the worst gap matches the same "worst across the rep" intent used
+    # for lean above.
+    #
     # Asymmetry needs a front-on camera. Side-on, the far leg is occluded and
     # tracked in a small, noisy fraction of frames — comparing it against the
     # near leg produced ~38 degrees of "asymmetry" on footage with none, which
     # is worse than saying nothing.
     asymmetry = (
-        abs(left_at_bottom - right_at_bottom)
+        _window_max_gap(angles.left_knee_deg, angles.right_knee_deg, start, end)
         if angles.view is ViewOrientation.FRONT
-        and left_at_bottom is not None
-        and right_at_bottom is not None
         else None
     )
 
@@ -259,3 +266,23 @@ def _window_max(values: list[float | None], start: int, end: int) -> float | Non
     """Largest present value in ``[start, end]``, or None."""
     present = [v for v in values[start : end + 1] if v is not None]
     return max(present) if present else None
+
+
+def _window_max_gap(
+    left: list[float | None],
+    right: list[float | None],
+    start: int,
+    end: int,
+) -> float | None:
+    """Largest ``|left - right|`` over frames in ``[start, end]``, or None.
+
+    Only frames where both sides are present contribute; the difference is taken
+    within each frame, so it reflects a same-instant left/right comparison rather
+    than the gap between two values measured at different times.
+    """
+    gaps = [
+        abs(a - b)
+        for a, b in zip(left[start : end + 1], right[start : end + 1], strict=True)
+        if a is not None and b is not None
+    ]
+    return max(gaps) if gaps else None

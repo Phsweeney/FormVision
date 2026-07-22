@@ -177,6 +177,28 @@ class TestRepMeasurements:
         for rep in detect_reps(angles, settings):
             assert rep.knee_asymmetry_deg < 1.0
 
+    def test_asymmetry_catches_shift_that_shares_a_minimum(self):
+        """Regression: each leg reaching the same minimum at a different frame is
+        still asymmetric.
+
+        The original metric took each leg's deepest angle independently and
+        differenced them. A lifter loading one leg passes both knees through a
+        similar minimum, just at different moments, so that difference collapsed
+        to near zero on footage showing an obvious lean. The gap must be measured
+        within each frame, then taken at its worst across the rep.
+        """
+        from app.analysis.reps import _window_max_gap
+
+        # Left is deepest at frame 0, right at frame 2; their minima match (100),
+        # yet the two legs never agree within a single frame.
+        left = [100.0, 130.0, 160.0]
+        right = [160.0, 130.0, 100.0]
+        assert _window_max_gap(left, right, 0, 2) == 60.0
+
+        # A leg absent for a frame simply does not contribute that frame.
+        assert _window_max_gap([100.0, None, 100.0], [160.0, 5.0, 130.0], 0, 2) == 60.0
+        assert _window_max_gap([None, None], [1.0, 2.0], 0, 1) is None
+
     def test_asymmetry_is_unmeasured_side_on(self, settings):
         """One leg hides the other, so there is nothing to compare it against.
 
