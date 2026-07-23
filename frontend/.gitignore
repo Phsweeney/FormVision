@@ -13,6 +13,11 @@
 # testing
 /coverage
 
+# live-mode MediaPipe assets (large binaries; recreated by `npm run setup:live`,
+# mirroring how the backend gitignores its downloaded model)
+/public/mediapipe
+/public/models
+
 # next.js
 /.next/
 /out/

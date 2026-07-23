@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { LiveStage } from "@/components/live/live-stage";
 import { buttonVariants } from "@/components/ui/button";
 
 /**
@@ -41,11 +42,14 @@ export default function LivePage() {
         </Link>
       </header>
 
-      <div className="border-border/60 bg-card/40 mt-6 grid aspect-video w-full place-items-center rounded-xl border">
-        <p className="text-muted-foreground text-sm">
-          Camera stage — coming online in the next step.
-        </p>
+      <div className="mt-6">
+        <LiveStage />
       </div>
+
+      <p className="text-muted-foreground mt-4 text-center text-xs">
+        Stand where your whole body is in frame. Film side-on for depth and lean,
+        front-on for left/right balance.
+      </p>
     </div>
   );
 }
