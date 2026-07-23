@@ -34,6 +34,89 @@ import {
 
 const MIN_SCALE = 1e-6;
 
+/** Raw (un-smoothed) per-frame angles and validity, shared by batch and live. */
+export interface RawFrameAngles {
+  usable: boolean;
+  leftLeg: boolean;
+  rightLeg: boolean;
+  leftKneeDeg: number | null;
+  rightKneeDeg: number | null;
+  hipDeg: number | null;
+  torsoLeanDeg: number | null;
+  hipHeight: number | null;
+  hipKneeOffset: number | null;
+}
+
+/**
+ * Compute one frame's raw angles given already-known body scale and view.
+ *
+ * The batch pipeline calls this in a loop then smooths the arrays; the live
+ * driver calls it per frame (with scale and view fixed at calibration) and
+ * smooths causally. Extracting it keeps the trig in exactly one place.
+ */
+export function computeRawFrameAngles(
+  frame: FramePose,
+  torsoScale: number | null,
+  thighScale: number | null,
+  leanIsMeasurable: boolean,
+  threshold: number,
+): RawFrameAngles {
+  const usable = frameIsUsable(frame, threshold);
+  const leftLeg = usable && groupVisible(frame, LEFT_LEG_LANDMARKS, threshold);
+  const rightLeg = usable && groupVisible(frame, RIGHT_LEG_LANDMARKS, threshold);
+
+  if (!usable) {
+    return {
+      usable: false,
+      leftLeg: false,
+      rightLeg: false,
+      leftKneeDeg: null,
+      rightKneeDeg: null,
+      hipDeg: null,
+      torsoLeanDeg: null,
+      hipHeight: null,
+      hipKneeOffset: null,
+    };
+  }
+
+  const shoulderMid = pairPoint(frame, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER, threshold);
+  const hipMid = pairPoint(frame, LM.LEFT_HIP, LM.RIGHT_HIP, threshold);
+  const kneeMid = pairPoint(frame, LM.LEFT_KNEE, LM.RIGHT_KNEE, threshold);
+  const ankleMid = pairPoint(frame, LM.LEFT_ANKLE, LM.RIGHT_ANKLE, threshold);
+
+  return {
+    usable: true,
+    leftLeg,
+    rightLeg,
+    leftKneeDeg: leftLeg
+      ? jointAngle(
+          landmarkAt(frame, LM.LEFT_HIP)!,
+          landmarkAt(frame, LM.LEFT_KNEE)!,
+          landmarkAt(frame, LM.LEFT_ANKLE)!,
+        )
+      : null,
+    rightKneeDeg: rightLeg
+      ? jointAngle(
+          landmarkAt(frame, LM.RIGHT_HIP)!,
+          landmarkAt(frame, LM.RIGHT_KNEE)!,
+          landmarkAt(frame, LM.RIGHT_ANKLE)!,
+        )
+      : null,
+    hipDeg:
+      shoulderMid && hipMid && kneeMid
+        ? angleBetweenPoints(shoulderMid, hipMid, kneeMid)
+        : null,
+    torsoLeanDeg:
+      leanIsMeasurable && hipMid && shoulderMid
+        ? angleFromVertical(hipMid, shoulderMid)
+        : null,
+    hipHeight:
+      torsoScale && ankleMid && hipMid ? (ankleMid[1] - hipMid[1]) / torsoScale : null,
+    hipKneeOffset:
+      thighScale && hipMid && kneeMid ? (hipMid[1] - kneeMid[1]) / thighScale : null,
+  };
+}
+
 function visible(
   frame: FramePose,
   index: number,
@@ -136,67 +219,22 @@ export function computeAngles(
 
   for (const frame of frames) {
     series.timestampsS.push(frame.timestampS);
-    const usable = frameIsUsable(frame, threshold);
-    const leftLeg = usable && groupVisible(frame, LEFT_LEG_LANDMARKS, threshold);
-    const rightLeg = usable && groupVisible(frame, RIGHT_LEG_LANDMARKS, threshold);
-
-    series.valid.push(usable);
-    series.leftLegValid.push(leftLeg);
-    series.rightLegValid.push(rightLeg);
-
-    if (!usable) {
-      series.leftKneeDeg.push(null);
-      series.rightKneeDeg.push(null);
-      series.hipDeg.push(null);
-      series.torsoLeanDeg.push(null);
-      series.hipHeight.push(null);
-      series.hipKneeOffset.push(null);
-      continue;
-    }
-
-    series.leftKneeDeg.push(
-      leftLeg
-        ? jointAngle(
-            landmarkAt(frame, LM.LEFT_HIP)!,
-            landmarkAt(frame, LM.LEFT_KNEE)!,
-            landmarkAt(frame, LM.LEFT_ANKLE)!,
-          )
-        : null,
+    const raw = computeRawFrameAngles(
+      frame,
+      torsoScale,
+      thighScale,
+      leanIsMeasurable,
+      threshold,
     );
-    series.rightKneeDeg.push(
-      rightLeg
-        ? jointAngle(
-            landmarkAt(frame, LM.RIGHT_HIP)!,
-            landmarkAt(frame, LM.RIGHT_KNEE)!,
-            landmarkAt(frame, LM.RIGHT_ANKLE)!,
-          )
-        : null,
-    );
-
-    const shoulderMid = pairPoint(frame, LM.LEFT_SHOULDER, LM.RIGHT_SHOULDER, threshold);
-    const hipMid = pairPoint(frame, LM.LEFT_HIP, LM.RIGHT_HIP, threshold);
-    const kneeMid = pairPoint(frame, LM.LEFT_KNEE, LM.RIGHT_KNEE, threshold);
-    const ankleMid = pairPoint(frame, LM.LEFT_ANKLE, LM.RIGHT_ANKLE, threshold);
-
-    series.hipDeg.push(
-      shoulderMid && hipMid && kneeMid
-        ? angleBetweenPoints(shoulderMid, hipMid, kneeMid)
-        : null,
-    );
-
-    series.torsoLeanDeg.push(
-      leanIsMeasurable && hipMid && shoulderMid
-        ? angleFromVertical(hipMid, shoulderMid)
-        : null,
-    );
-
-    series.hipHeight.push(
-      torsoScale && ankleMid && hipMid ? (ankleMid[1] - hipMid[1]) / torsoScale : null,
-    );
-
-    series.hipKneeOffset.push(
-      thighScale && hipMid && kneeMid ? (hipMid[1] - kneeMid[1]) / thighScale : null,
-    );
+    series.valid.push(raw.usable);
+    series.leftLegValid.push(raw.leftLeg);
+    series.rightLegValid.push(raw.rightLeg);
+    series.leftKneeDeg.push(raw.leftKneeDeg);
+    series.rightKneeDeg.push(raw.rightKneeDeg);
+    series.hipDeg.push(raw.hipDeg);
+    series.torsoLeanDeg.push(raw.torsoLeanDeg);
+    series.hipHeight.push(raw.hipHeight);
+    series.hipKneeOffset.push(raw.hipKneeOffset);
   }
 
   smoothInPlace(series, fps, config);

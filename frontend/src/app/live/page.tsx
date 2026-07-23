@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { LiveStage } from "@/components/live/live-stage";
+import { LiveDashboard } from "@/components/live/live-dashboard";
 import { buttonVariants } from "@/components/ui/button";
 
 /**
@@ -43,7 +43,7 @@ export default function LivePage() {
       </header>
 
       <div className="mt-6">
-        <LiveStage />
+        <LiveDashboard />
       </div>
 
       <p className="text-muted-foreground mt-4 text-center text-xs">
