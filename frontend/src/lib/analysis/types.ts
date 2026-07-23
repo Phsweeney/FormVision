@@ -129,3 +129,87 @@ export function landmarkAt(frame: FramePose, index: number): Landmark | null {
   if (!frame.detected || index >= frame.landmarks.length) return null;
   return frame.landmarks[index];
 }
+
+/** A per-frame signal: one value per frame, null where it could not be measured. */
+export type Signal = (number | null)[];
+
+/**
+ * Per-frame joint angles and derived signals — the TS mirror of `AngleSeries`.
+ * Every array is index-aligned with the frames it was built from.
+ */
+export interface AngleSeries {
+  timestampsS: number[];
+  leftKneeDeg: Signal;
+  rightKneeDeg: Signal;
+  hipDeg: Signal;
+  torsoLeanDeg: Signal;
+  hipHeight: Signal;
+  hipKneeOffset: Signal;
+  valid: boolean[];
+  leftLegValid: boolean[];
+  rightLegValid: boolean[];
+  torsoScale: number | null;
+  thighScale: number | null;
+  view: ViewOrientation;
+}
+
+/** Fraction of frames that were usable — the tracking-quality signal. */
+export function validFraction(angles: AngleSeries): number {
+  if (angles.valid.length === 0) return 0;
+  const usable = angles.valid.reduce((n, v) => n + (v ? 1 : 0), 0);
+  return usable / angles.valid.length;
+}
+
+/** One measured repetition — the TS mirror of `Rep`. */
+export interface Rep {
+  index: number;
+  startFrame: number;
+  bottomFrame: number;
+  endFrame: number;
+  startTimeS: number;
+  bottomTimeS: number;
+  endTimeS: number;
+  minKneeAngleDeg: number | null;
+  minLeftKneeDeg: number | null;
+  minRightKneeDeg: number | null;
+  minHipAngleDeg: number | null;
+  maxTorsoLeanDeg: number | null;
+  kneeAsymmetryDeg: number | null;
+  depthPercent: number | null;
+  hipBelowKnee: boolean;
+}
+
+export function repDurationS(rep: Rep): number {
+  return rep.endTimeS - rep.startTimeS;
+}
+/** Descent time: start to the bottom. */
+export function repEccentricS(rep: Rep): number {
+  return rep.bottomTimeS - rep.startTimeS;
+}
+/** Ascent time: the bottom to lockout. */
+export function repConcentricS(rep: Rep): number {
+  return rep.endTimeS - rep.bottomTimeS;
+}
+
+/** Workout-level summary — the TS mirror of `Metrics`. */
+export interface Metrics {
+  totalReps: number;
+  videoDurationS: number;
+  totalWorkoutTimeS: number;
+  maxDepthPercent: number | null;
+  avgDepthPercent: number | null;
+  minKneeAngleDeg: number | null;
+  avgRepDurationS: number | null;
+  fastestRepS: number | null;
+  slowestRepS: number | null;
+  avgEccentricS: number | null;
+  avgConcentricS: number | null;
+  repsPerMinute: number | null;
+  avgTorsoLeanDeg: number | null;
+  maxTorsoLeanDeg: number | null;
+  avgKneeAsymmetryDeg: number | null;
+  depthConsistencyPercent: number | null;
+  durationConsistencyS: number | null;
+  trackingQuality: number;
+  cameraView: ViewOrientation;
+}
