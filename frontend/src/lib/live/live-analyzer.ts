@@ -60,6 +60,9 @@ export interface LiveState {
 /** Minimum detected frames before calibration is trusted. */
 const MIN_CALIBRATION_FRAMES = 5;
 
+/** How long the state badge holds on "Bottom" after the turnaround. */
+const BOTTOM_HOLD_S = 0.4;
+
 function emptySeries(view: ViewOrientation): AngleSeries {
   return {
     timestampsS: [],
@@ -107,6 +110,7 @@ export class LiveAnalyzer {
   private maxDepth: number | null = null;
   private phase: LivePhase = "calibrating";
   private repStartTs: number | null = null;
+  private bottomHoldUntilS = 0;
 
   constructor(private readonly config: AnalysisConfig) {}
 
@@ -246,9 +250,17 @@ export class LiveAnalyzer {
     this.buffer.leftLegValid.push(raw.leftLeg);
     this.buffer.rightLegValid.push(raw.rightLeg);
 
-    // Adapt the bottom reference downward as the lifter descends, then refresh
-    // the thresholds from it.
+    // Bottom reference: the deepest point of the *current* descent. While the
+    // lifter is standing it is pinned to the baseline, so each rep re-derives
+    // its own depth from scratch. This is deliberately not a session-long
+    // running minimum: one glitch frame (a tracking blip that briefly puts the
+    // hip below the ankle, i.e. a spuriously low hip height) would otherwise
+    // ratchet it down permanently, blow the descend threshold below anything
+    // reachable, and silently kill rep detection for the rest of the session.
+    // Flooring at zero guards against that same negative-glitch case within a rep.
+    if (this.machine!.phase === "standing") this.bottomReference = this.baseline;
     if (hip !== null && hip < this.bottomReference) this.bottomReference = hip;
+    this.bottomReference = Math.max(this.bottomReference, 0);
     const { descend, ascend } = this.thresholds();
     this.machine!.setThresholds(descend, ascend);
 
@@ -259,6 +271,11 @@ export class LiveAnalyzer {
     // A descent has just begun: mark the rep's start time.
     if (previousPhase === "standing" && machinePhase === "descending") {
       this.repStartTs = frame.timestampS;
+    }
+    // The hip has bottomed out and started rising: hold a "bottom" readout
+    // briefly so the state badge shows the moment, which is otherwise instant.
+    if (previousPhase === "descending" && machinePhase === "ascending") {
+      this.bottomHoldUntilS = frame.timestampS + BOTTOM_HOLD_S;
     }
 
     if (triple) {
@@ -294,7 +311,7 @@ export class LiveAnalyzer {
         : null;
     if (depth !== null) this.maxDepth = Math.max(this.maxDepth ?? 0, depth);
 
-    this.phase = this.derivePhase(machinePhase, hip);
+    this.phase = this.derivePhase(machinePhase, frame.timestampS);
 
     return {
       phase: this.phase,
@@ -315,15 +332,12 @@ export class LiveAnalyzer {
   /** Map the machine phase to the four display states, adding a "bottom" band. */
   private derivePhase(
     machinePhase: "standing" | "descending" | "ascending",
-    hip: number | null,
+    nowS: number,
   ): LivePhase {
     if (machinePhase === "standing") return "standing";
-    // Near the deepest point of an active rep, call it the bottom.
-    if (hip !== null) {
-      const travel = this.baseline - this.bottomReference;
-      if (travel > 0 && hip <= this.bottomReference + 0.12 * travel) return "bottom";
-    }
-    return machinePhase;
+    if (machinePhase === "descending") return "descending";
+    // Ascending: show "bottom" for a brief hold right after the turnaround.
+    return nowS < this.bottomHoldUntilS ? "bottom" : "ascending";
   }
 
   private updateFps(timestampS: number): void {

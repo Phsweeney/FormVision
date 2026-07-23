@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_CONFIG } from "@/lib/analysis/config";
-import { buildSquatSeries, buildStandingSeries } from "@/lib/analysis/synthetic";
+import {
+  buildFrame,
+  buildSquatSeries,
+  buildStandingSeries,
+} from "@/lib/analysis/synthetic";
 
 import { LiveAnalyzer } from "./live-analyzer";
 
@@ -21,6 +25,27 @@ describe("LiveAnalyzer", () => {
     expect(analyzer.reps.length).toBe(3);
     expect(last.repCount).toBe(3);
     expect(last.maxDepthPercent).not.toBeNull();
+  });
+
+  it("survives a tracking glitch that a running-minimum would never recover from", () => {
+    // Regression: a few frames where the hip is tracked far below the ankle (a
+    // real MediaPipe blip) produce a wildly negative hip height. A session-long
+    // running minimum would latch onto it, push the descend threshold below
+    // anything reachable, and stop counting reps for good — the exact symptom
+    // reported (stuck on "Standing" at full depth). The per-rep reset must
+    // absorb it.
+    const series = buildSquatSeries({ reps: 3, standingPauseS: 3, view: "front" });
+    // Corrupt three consecutive frames in the standing pause after rep 1.
+    for (const i of [199, 200, 201]) {
+      series.frames[i] = buildFrame(i, series.frames[i].timestampS, 2.0, {
+        view: "front",
+      });
+    }
+
+    const analyzer = new LiveAnalyzer(DEFAULT_CONFIG);
+    for (const frame of series.frames) analyzer.push(frame);
+
+    expect(analyzer.reps.length).toBe(3);
   });
 
   it("counts nothing while the lifter just stands there", () => {
