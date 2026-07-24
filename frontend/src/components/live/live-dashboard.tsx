@@ -7,10 +7,12 @@ import { DEFAULT_CONFIG, fetchConfig, type AnalysisConfig } from "@/lib/analysis
 import type { FramePose, Severity } from "@/lib/analysis/types";
 import { Coach, type Cue } from "@/lib/live/coach";
 import { LiveAnalyzer, type LiveState } from "@/lib/live/live-analyzer";
+import { summarizeSession, type SessionSummary } from "@/lib/live/session";
 import { createVoiceCoach, type VoiceCoach } from "@/lib/live/voice";
 
 import { LiveMetrics } from "./live-metrics";
 import { LiveStage } from "./live-stage";
+import { WorkoutSummary } from "./workout-summary";
 
 /** Push UI state at most this often; pose still runs every frame underneath. */
 const UI_UPDATE_INTERVAL_MS = 100;
@@ -38,10 +40,12 @@ export function LiveDashboard() {
   const voiceRef = useRef<VoiceCoach | null>(null);
   const latestStateRef = useRef<LiveState | null>(null);
   const lastUiFlushRef = useRef(0);
+  const sessionStartMsRef = useRef(0);
 
   const [state, setState] = useState<LiveState | null>(null);
   const [running, setRunning] = useState(false);
   const [cue, setCue] = useState<Cue | null>(null);
+  const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [speechRate, setSpeechRate] = useState(1);
 
@@ -86,10 +90,17 @@ export function LiveDashboard() {
     if (isRunning) {
       analyzerRef.current = new LiveAnalyzer(configRef.current);
       coachRef.current = new Coach(configRef.current);
+      sessionStartMsRef.current = performance.now();
       latestStateRef.current = null;
       setState(null);
       setCue(null);
+      setSummary(null);
     } else {
+      const analyzer = analyzerRef.current;
+      if (analyzer && analyzer.reps.length > 0) {
+        const durationS = (performance.now() - sessionStartMsRef.current) / 1000;
+        setSummary(summarizeSession(analyzer.reps, durationS));
+      }
       if (latestStateRef.current) setState(latestStateRef.current);
       analyzerRef.current = null;
       voiceRef.current?.cancel();
@@ -141,8 +152,8 @@ export function LiveDashboard() {
       </div>
 
       <div className="space-y-4">
-        {/* Coaching cue, when there is one. */}
-        {cue && (
+        {/* Coaching cue, while a session is live. */}
+        {running && cue && (
           <div
             className={`rounded-xl border px-4 py-3 text-lg font-semibold ${CUE_TONE[cue.severity]}`}
           >
@@ -150,7 +161,9 @@ export function LiveDashboard() {
           </div>
         )}
 
-        {state ? (
+        {!running && summary ? (
+          <WorkoutSummary summary={summary} />
+        ) : state ? (
           <LiveMetrics state={state} config={config} />
         ) : (
           <div className="border-border/60 bg-card/40 text-muted-foreground grid min-h-48 place-items-center rounded-xl border p-6 text-center text-sm">
