@@ -6,6 +6,10 @@ import type { LivePhase, LiveState } from "@/lib/live/live-analyzer";
 
 /** How each phase reads and colours in the state badge. */
 const PHASE: Record<LivePhase, { label: string; className: string }> = {
+  waiting: {
+    label: "Get set",
+    className: "border-amber-500/40 bg-amber-500/15 text-amber-300",
+  },
   calibrating: {
     label: "Calibrating",
     className: "border-amber-500/40 bg-amber-500/15 text-amber-300",

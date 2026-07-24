@@ -69,20 +69,26 @@ export function LiveDashboard() {
     }
   }, []);
 
-  const calibrating = running && state !== null && state.phase === "calibrating";
+  const settingUp =
+    running &&
+    state !== null &&
+    (state.phase === "waiting" || state.phase === "calibrating");
 
   return (
     <div className="grid gap-6 lg:grid-cols-[3fr_2fr]">
       <div className="space-y-3">
         <LiveStage onFrame={handleFrame} onRunningChange={handleRunningChange} />
-        {calibrating && state && (
+        {settingUp && state && (
           <div className="border-amber-500/40 bg-amber-500/10 rounded-xl border p-4">
             <p className="text-sm font-medium text-amber-200">
-              Calibrating — stand still
+              {state.phase === "waiting"
+                ? "Get into position and hold still"
+                : "Calibrating — keep still"}
             </p>
             <p className="text-muted-foreground mt-1 text-xs">
-              Measuring your standing height and body scale so reps and depth are
-              accurate.
+              {state.phase === "waiting"
+                ? "Stand where your whole body is in frame. Calibration starts once you settle, so you can start the camera before walking into position."
+                : "Measuring your standing height and body scale so reps and depth are accurate."}
             </p>
             <div className="bg-muted/40 mt-3 h-1.5 overflow-hidden rounded-full">
               <div

@@ -23,16 +23,19 @@ import { linearScale } from "@/lib/analysis/geometry";
 import { RepStateMachine, buildRep } from "@/lib/analysis/reps";
 import { windowSizeForFps } from "@/lib/analysis/smoothing";
 import { median } from "@/lib/analysis/stats";
-import type {
-  AngleSeries,
-  FramePose,
-  Rep,
-  ViewOrientation,
+import {
+  PoseLandmarkIndex as LM,
+  landmarkAt,
+  type AngleSeries,
+  type FramePose,
+  type Rep,
+  type ViewOrientation,
 } from "@/lib/analysis/types";
 
 import { TrailingAverage } from "./trailing-average";
 
 export type LivePhase =
+  | "waiting"
   | "calibrating"
   | "standing"
   | "descending"
@@ -63,6 +66,17 @@ const MIN_CALIBRATION_FRAMES = 5;
 /** How long the state badge holds on "Bottom" after the turnaround. */
 const BOTTOM_HOLD_S = 0.4;
 
+/** Trailing window over which stillness is judged, before calibration begins. */
+const STILL_WINDOW_S = 0.5;
+
+/**
+ * Maximum hip-height movement (normalised frame units) over the still window for
+ * the lifter to count as "standing still". A settled stance sways well under
+ * this; walking back into position, or bobbing, exceeds it. This gates the
+ * *start* of calibration so getting into position never poisons the baseline.
+ */
+const STILLNESS_TOLERANCE = 0.03;
+
 function emptySeries(view: ViewOrientation): AngleSeries {
   return {
     timestampsS: [],
@@ -84,7 +98,10 @@ function emptySeries(view: ViewOrientation): AngleSeries {
 export class LiveAnalyzer {
   private calibrating = true;
   private calibrationFrames: FramePose[] = [];
-  private startTs: number | null = null;
+  /** When the current unbroken stretch of standing still began, or null. */
+  private stillSinceTs: number | null = null;
+  /** Recent hip-height samples for the stillness check. */
+  private recentHip: Array<{ t: number; y: number }> = [];
   private lastFrameTs: number | null = null;
   private fpsEstimate = 30;
 
@@ -108,7 +125,7 @@ export class LiveAnalyzer {
 
   private readonly repList: Rep[] = [];
   private maxDepth: number | null = null;
-  private phase: LivePhase = "calibrating";
+  private phase: LivePhase = "waiting";
   private repStartTs: number | null = null;
   private bottomHoldUntilS = 0;
 
@@ -128,7 +145,8 @@ export class LiveAnalyzer {
   reset(): void {
     this.calibrating = true;
     this.calibrationFrames = [];
-    this.startTs = null;
+    this.stillSinceTs = null;
+    this.recentHip = [];
     this.lastFrameTs = null;
     this.ready = false;
     this.machine = null;
@@ -136,7 +154,7 @@ export class LiveAnalyzer {
     this.liveIndex = 0;
     this.repList.length = 0;
     this.maxDepth = null;
-    this.phase = "calibrating";
+    this.phase = "waiting";
     this.repStartTs = null;
     this.view = "unknown";
   }
@@ -144,17 +162,6 @@ export class LiveAnalyzer {
   // --- Calibration -------------------------------------------------------
 
   private calibrate(frame: FramePose): LiveState {
-    if (this.startTs === null) this.startTs = frame.timestampS;
-    if (frame.detected) this.calibrationFrames.push(frame);
-
-    const elapsed = frame.timestampS - this.startTs;
-    const progress = Math.min(elapsed / this.config.live_calibration_seconds, 1);
-
-    if (progress >= 1 && this.calibrationFrames.length >= MIN_CALIBRATION_FRAMES) {
-      this.finishCalibration();
-    }
-
-    // Show the live knee angle even while calibrating (it needs no scale).
     const raw = computeRawFrameAngles(
       frame,
       null,
@@ -163,9 +170,49 @@ export class LiveAnalyzer {
       this.config.landmark_visibility_threshold,
     );
     const knee = smallestPresent(raw.leftKneeDeg, raw.rightKneeDeg);
+    const hipY = this.hipMidY(frame);
+
+    // Calibration only runs while the lifter is fully in frame and holding
+    // still. This is what lets someone start the camera at their keyboard and
+    // walk into position: the moving frames are ignored, and the 2.5s of
+    // measurement only accumulates once they have settled. Any motion resets it.
+    const inFrame = raw.usable && hipY !== null;
+    if (inFrame && this.isStill(frame.timestampS, hipY)) {
+      if (this.stillSinceTs === null) {
+        this.stillSinceTs = frame.timestampS;
+        this.calibrationFrames = [];
+      }
+      this.calibrationFrames.push(frame);
+      const elapsed = frame.timestampS - this.stillSinceTs;
+      if (
+        elapsed >= this.config.live_calibration_seconds &&
+        this.calibrationFrames.length >= MIN_CALIBRATION_FRAMES
+      ) {
+        this.finishCalibration();
+      }
+    } else {
+      this.stillSinceTs = null;
+      this.calibrationFrames = [];
+      // Out of frame entirely: drop stale stillness samples so returning starts fresh.
+      if (!inFrame) this.recentHip = [];
+    }
+
+    const progress =
+      this.stillSinceTs !== null
+        ? Math.min(
+            (frame.timestampS - this.stillSinceTs) /
+              this.config.live_calibration_seconds,
+            1,
+          )
+        : 0;
+    const phase: LivePhase = this.calibrating
+      ? this.stillSinceTs !== null
+        ? "calibrating"
+        : "waiting"
+      : this.phase;
 
     return {
-      phase: this.calibrating ? "calibrating" : this.phase,
+      phase,
       calibrationProgress: progress,
       ready: this.ready,
       view: this.view,
@@ -177,6 +224,34 @@ export class LiveAnalyzer {
       currentRepElapsedS: null,
       lastRep: null,
     };
+  }
+
+  /** Hip-midpoint y in normalised frame coords, or null if not both visible. */
+  private hipMidY(frame: FramePose): number | null {
+    const threshold = this.config.landmark_visibility_threshold;
+    const left = landmarkAt(frame, LM.LEFT_HIP);
+    const right = landmarkAt(frame, LM.RIGHT_HIP);
+    if (!left || !right) return null;
+    if (left.visibility < threshold || right.visibility < threshold) return null;
+    return (left.y + right.y) / 2;
+  }
+
+  /** True once the hip has barely moved across the last STILL_WINDOW_S. */
+  private isStill(timestampS: number, hipY: number): boolean {
+    this.recentHip.push({ t: timestampS, y: hipY });
+    const cutoff = timestampS - STILL_WINDOW_S;
+    while (this.recentHip.length > 0 && this.recentHip[0].t < cutoff) {
+      this.recentHip.shift();
+    }
+    // Need a full window of samples before judging stillness.
+    if (this.recentHip[0].t > timestampS - STILL_WINDOW_S * 0.8) return false;
+    let min = Infinity;
+    let max = -Infinity;
+    for (const { y } of this.recentHip) {
+      if (y < min) min = y;
+      if (y > max) max = y;
+    }
+    return max - min < STILLNESS_TOLERANCE;
   }
 
   private finishCalibration(): void {
