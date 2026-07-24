@@ -28,10 +28,10 @@ import {
   landmarkAt,
   type AngleSeries,
   type FramePose,
-  type Rep,
   type ViewOrientation,
 } from "@/lib/analysis/types";
 
+import { analyzeRep, type LiveRep } from "./rep-analysis";
 import { TrailingAverage } from "./trailing-average";
 
 export type LivePhase =
@@ -56,8 +56,8 @@ export interface LiveState {
   currentTorsoLeanDeg: number | null;
   /** Seconds since the current rep's descent began, or null between reps. */
   currentRepElapsedS: number | null;
-  /** The most recently completed rep, for tempo/feedback consumers. */
-  lastRep: Rep | null;
+  /** The most recently completed rep, enriched with tempo/pause/half-rep. */
+  lastRep: LiveRep | null;
 }
 
 /** Minimum detected frames before calibration is trusted. */
@@ -123,7 +123,7 @@ export class LiveAnalyzer {
   private buffer: AngleSeries = emptySeries("unknown");
   private liveIndex = 0;
 
-  private readonly repList: Rep[] = [];
+  private readonly repList: LiveRep[] = [];
   private maxDepth: number | null = null;
   private phase: LivePhase = "waiting";
   private repStartTs: number | null = null;
@@ -132,7 +132,7 @@ export class LiveAnalyzer {
   constructor(private readonly config: AnalysisConfig) {}
 
   /** Completed reps so far this session. */
-  get reps(): Rep[] {
+  get reps(): LiveRep[] {
     return this.repList;
   }
 
@@ -365,7 +365,7 @@ export class LiveAnalyzer {
           this.buffer,
           this.config,
         );
-        this.repList.push(rep);
+        this.repList.push(analyzeRep(rep, this.buffer, this.config));
         if (rep.depthPercent !== null) {
           this.maxDepth = Math.max(this.maxDepth ?? 0, rep.depthPercent);
         }
