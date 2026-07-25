@@ -3,26 +3,6 @@ import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
 import { UploadPanel } from "@/components/upload/upload-panel";
 
-/** What the analysis produces, shown so the value is clear before uploading. */
-const CAPABILITIES = [
-  {
-    title: "Pose tracking",
-    body: "Body landmarks extracted from every frame and rendered as a skeleton overlay on your video.",
-  },
-  {
-    title: "Rep counting",
-    body: "Repetitions detected from hip movement, with each one broken into its descent and ascent.",
-  },
-  {
-    title: "Joint angles",
-    body: "Knee, hip, and torso angles measured frame by frame and plotted so you can see where form changed.",
-  },
-  {
-    title: "Coaching feedback",
-    body: "Depth, forward lean, left-right balance, consistency, and tempo — each with an explanation of why it matters.",
-  },
-] as const;
-
 /**
  * Landing page.
  *
@@ -109,22 +89,6 @@ export default function HomePage() {
             <li>· One person in shot, in even lighting.</li>
           </ul>
         </div>
-      </section>
-
-      <section className="mt-12">
-        <h2 className="text-muted-foreground mb-4 text-xs font-medium tracking-wide uppercase">
-          What you get
-        </h2>
-        <dl className="border-border/60 grid gap-px overflow-hidden rounded-xl border sm:grid-cols-2">
-          {CAPABILITIES.map((item) => (
-            <div key={item.title} className="bg-card/40 p-5">
-              <dt className="text-sm font-medium">{item.title}</dt>
-              <dd className="text-muted-foreground mt-1.5 text-xs leading-relaxed">
-                {item.body}
-              </dd>
-            </div>
-          ))}
-        </dl>
       </section>
     </div>
   );

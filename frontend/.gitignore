@@ -37,6 +37,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# The example carries no secrets and is the only place a newcomer learns that
+# the API base URL is configurable.
+!.env.local.example
 
 # vercel
 .vercel

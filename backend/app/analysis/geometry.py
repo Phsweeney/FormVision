@@ -107,6 +107,41 @@ def angle_from_vertical(
     return angle
 
 
+def horizontal_offset_from_line(
+    point: tuple[float, float],
+    start: tuple[float, float],
+    end: tuple[float, float],
+) -> float | None:
+    """Signed horizontal gap from ``point`` to the ``start -> end`` line.
+
+    The line is sampled at the point's *own* height, so the result answers "how
+    far sideways is the knee from where the hip-to-ankle line puts it", which is
+    the quantity a coach means by a knee tracking inward. Positive means the
+    point lies to the right of the line in image coordinates (larger ``x``);
+    callers decide what that means anatomically.
+
+    Returns None when ``start`` and ``end`` are at the same height, since there
+    is then no line to interpolate along. That is not a pathological case: it is
+    exactly what a frame cropped mid-shin, or a badly tracked ankle, produces.
+
+    Args:
+        point: The point to measure, e.g. the knee.
+        start: One end of the reference line, e.g. the hip.
+        end: The other end, e.g. the ankle.
+    """
+    vertical_span = end[1] - start[1]
+    if abs(vertical_span) < _EPSILON:
+        return None
+
+    # Where along start -> end the point's height falls. Deliberately not
+    # clamped to [0, 1]: a knee above the hip or below the ankle is a tracking
+    # failure, and extrapolating gives a large offset that the visibility gates
+    # upstream will have already suppressed anyway.
+    ratio = (point[1] - start[1]) / vertical_span
+    expected_x = start[0] + ratio * (end[0] - start[0])
+    return point[0] - expected_x
+
+
 def clamp(value: float, low: float, high: float) -> float:
     """Constrain ``value`` to ``[low, high]``."""
     return max(low, min(high, value))

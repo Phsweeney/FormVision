@@ -19,6 +19,7 @@ from app.analysis.smoothing import decimation_indices
 from app.analysis.types import (
     AnalysisResult,
     AngleSeries,
+    FaultPrediction,
     FeedbackItem,
     Metrics,
     Rep,
@@ -192,6 +193,21 @@ class FeedbackSchema(BaseModel):
     title: str
     message: str
     explanation: str
+    source: str = Field(
+        default="rule",
+        description=(
+            "Where the advice came from: 'rule' for a direct measurement against "
+            "a threshold, 'model' for a trained classifier. Defaulted so results "
+            "stored before the ML layer existed still decode."
+        ),
+    )
+    confidence: float | None = Field(
+        default=None,
+        description=(
+            "Model confidence, 0-1. Null for rule-derived advice, which is not "
+            "probabilistic and must not be presented as though it were."
+        ),
+    )
 
     @classmethod
     def from_item(cls, item: FeedbackItem) -> FeedbackSchema:
@@ -201,6 +217,36 @@ class FeedbackSchema(BaseModel):
             title=item.title,
             message=item.message,
             explanation=item.explanation,
+            source=item.source.value,
+            confidence=_round(item.confidence, 3),
+        )
+
+
+class PredictionSchema(BaseModel):
+    """One model verdict on one repetition.
+
+    Exposed alongside the feedback items so a client can show which reps a fault
+    was found on, rather than only that it was found somewhere in the set.
+    """
+
+    fault_id: str
+    rep_index: int
+    probability: float | None
+    affected_fraction: float
+    threshold: float
+    feature_completeness: float
+    fired: bool
+
+    @classmethod
+    def from_prediction(cls, prediction: FaultPrediction) -> PredictionSchema:
+        return cls(
+            fault_id=prediction.fault_id,
+            rep_index=prediction.rep_index,
+            probability=_round(prediction.probability, 3),
+            affected_fraction=_round(prediction.affected_fraction, 3) or 0.0,
+            threshold=_round(prediction.threshold, 4) or 0.0,
+            feature_completeness=_round(prediction.feature_completeness, 3) or 0.0,
+            fired=prediction.fired,
         )
 
 
@@ -276,6 +322,13 @@ class AnalysisResponse(BaseModel):
     reps: list[RepSchema] | None = None
     feedback: list[FeedbackSchema] | None = None
     series: SeriesSchema | None = None
+    predictions: list[PredictionSchema] | None = Field(
+        default=None,
+        description=(
+            "Per-rep model verdicts. Absent on analyses run before the ML layer "
+            "existed, and empty when it is disabled or had nothing to say."
+        ),
+    )
 
     video_url: str | None = Field(
         default=None, description="Path to stream the original video."
@@ -310,6 +363,11 @@ class AnalysisResponse(BaseModel):
             response.feedback = [FeedbackSchema(**item) for item in payload["feedback"]]
             response.series = SeriesSchema(**payload["series"])
             response.estimator = payload.get("estimator")
+            # `.get` rather than `[...]`: results stored before the ML layer
+            # existed have no such key, and they must still render.
+            response.predictions = [
+                PredictionSchema(**item) for item in payload.get("predictions", [])
+            ]
 
         return response
 
@@ -330,6 +388,10 @@ def build_result_payload(result: AnalysisResult, max_series_points: int) -> dict
         ],
         "series": SeriesSchema.from_angles(result.angles, max_series_points).model_dump(),
         "estimator": result.estimator_name,
+        "predictions": [
+            PredictionSchema.from_prediction(prediction).model_dump()
+            for prediction in result.predictions
+        ],
     }
 
 

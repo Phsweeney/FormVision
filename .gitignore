@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# Planning workspace and reference material, kept out of the repository
+# ---------------------------------------------------------------------------
+/Plan/
+/docs/
+/README.md
+
+# Local sample footage used for manual end-to-end verification
+/samples/
+
+# ---------------------------------------------------------------------------
+# Python / backend
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+.coverage.*
+
+# Runtime data: uploaded videos, rendered overlays, cached landmarks, SQLite db.
+# `backend/models/` holds the MediaPipe pose bundle, which is downloaded on
+# first use rather than committed.
+/backend/data/
+/backend/models/
+*.db
+*.sqlite
+*.sqlite3
+
+# ---------------------------------------------------------------------------
+# Node / frontend
+# ---------------------------------------------------------------------------
+node_modules/
+.next/
+out/
+build/
+dist/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+.eslintcache
+
+# ---------------------------------------------------------------------------
+# Environment & secrets
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# ---------------------------------------------------------------------------
+# Editor / OS noise
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

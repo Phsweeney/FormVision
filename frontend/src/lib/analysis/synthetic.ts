@@ -81,6 +81,10 @@ interface FrameOptions {
   kneeForward?: number;
   leftRightBias?: number;
   hipSetback?: number;
+  /** Medial knee travel at full depth, as a fraction of a thigh length. */
+  kneeValgus?: number;
+  /** How much of `kneeValgus` applies this frame; normally the frame's depth. */
+  valgusDepthScale?: number;
   visibility?: number;
   detected?: boolean;
   view?: ViewOrientation;
@@ -98,6 +102,8 @@ export function buildFrame(
     kneeForward = 1,
     leftRightBias = 0,
     hipSetback = 0,
+    kneeValgus = 0,
+    valgusDepthScale = 1,
     visibility = 0.95,
     detected = true,
     view = "front",
@@ -156,7 +162,13 @@ export function buildFrame(
       [ankleX, ankleY],
       kneeForward,
     );
-    place(sideKnee, kneeX, kneeY);
+    // Medial is toward the midline: +x for the left leg, -x for the right.
+    // Scaled by `lateral` so a side-on figure, whose two sides collapse onto
+    // each other in the image, does not acquire a displacement the camera could
+    // never have seen. Scaled by depth because real valgus appears under load
+    // and disappears at lockout; nobody's knees cave while they are standing.
+    const medial = sideHip === LM.LEFT_HIP ? 1 : -1;
+    place(sideKnee, kneeX + medial * kneeValgus * valgusDepthScale * THIGH * lateral, kneeY);
     place(sideAnkle, ankleX, ankleY);
   }
 
@@ -177,6 +189,8 @@ export interface SquatOptions {
   torsoLeanDeg?: number;
   bottomLeanDeg?: number | null;
   leftRightBias?: number;
+  /** Medial knee travel at full depth, scaled through the rep by depth. */
+  kneeValgus?: number;
   depthJitter?: number;
   undetectedFrames?: number[];
   view?: ViewOrientation;
@@ -194,6 +208,7 @@ export function buildSquatSeries(options: SquatOptions = {}): SyntheticSeries {
     torsoLeanDeg = 12,
     bottomLeanDeg = null,
     leftRightBias = 0,
+    kneeValgus = 0,
     depthJitter = 0,
     undetectedFrames = [],
     view = "front",
@@ -207,12 +222,19 @@ export function buildSquatSeries(options: SquatOptions = {}): SyntheticSeries {
 
   const frames: FramePose[] = [];
   let frameIndex = 0;
-  const emit = (hipY: number, lean: number, setback: number): void => {
+  const emit = (
+    hipY: number,
+    lean: number,
+    setback: number,
+    depth = 0,
+  ): void => {
     frames.push(
       buildFrame(frameIndex, frameIndex / fps, hipY, {
         torsoLeanDeg: lean,
         leftRightBias,
         hipSetback: setback,
+        kneeValgus,
+        valgusDepthScale: depth,
         detected: !undetected.has(frameIndex),
         view,
         farSideVisibility,
@@ -237,7 +259,7 @@ export function buildSquatSeries(options: SquatOptions = {}): SyntheticSeries {
     for (let step = 0; step < repFrames; step++) {
       const phase = 0.5 * (1 - Math.cos((2 * Math.PI * step) / repFrames));
       const hipY = standingHipY + (bottomHipY - standingHipY) * phase;
-      emit(hipY, topLean + (lowLean - topLean) * phase, bottomSetback * phase);
+      emit(hipY, topLean + (lowLean - topLean) * phase, bottomSetback * phase, phase);
     }
     for (let i = 0; i < pauseFrames; i++) emit(standingHipY, topLean, 0);
   }

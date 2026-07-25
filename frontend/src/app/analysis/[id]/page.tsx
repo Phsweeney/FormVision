@@ -128,6 +128,7 @@ export default function AnalysisPage({
         <VideoPanel
           videoUrl={analysis.video_url}
           overlayUrl={analysis.overlay_url}
+          series={series}
         />
       </section>
 

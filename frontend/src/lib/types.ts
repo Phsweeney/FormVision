@@ -104,6 +104,16 @@ export interface Metrics {
 
 export type CameraView = "side" | "front" | "oblique" | "unknown";
 
+/**
+ * Where a piece of advice came from.
+ *
+ * `rule` is a direct measurement checked against a threshold. `model` is a
+ * trained classifier's opinion. The distinction is surfaced in the UI rather
+ * than hidden, because a lifter being told to change how they squat deserves to
+ * know which of the two they are reading.
+ */
+export type FeedbackSource = "rule" | "model";
+
 export interface FeedbackItem {
   /** Stable identifier — safe to key UI logic on, unlike the message text. */
   rule_id: string;
@@ -111,6 +121,21 @@ export interface FeedbackItem {
   title: string;
   message: string;
   explanation: string;
+  /** Optional: results stored before the ML layer existed carry no source. */
+  source?: FeedbackSource;
+  /** Model confidence 0-1. Null for rules, which are not probabilistic. */
+  confidence?: number | null;
+}
+
+/** One model verdict on one repetition. */
+export interface Prediction {
+  fault_id: string;
+  rep_index: number;
+  probability: number | null;
+  affected_fraction: number;
+  threshold: number;
+  feature_completeness: number;
+  fired: boolean;
 }
 
 /**
@@ -155,6 +180,8 @@ export interface Analysis {
   reps: Rep[] | null;
   feedback: FeedbackItem[] | null;
   series: Series | null;
+  /** Null on analyses run before the ML layer existed. */
+  predictions?: Prediction[] | null;
 
   video_url: string | null;
   overlay_url: string | null;

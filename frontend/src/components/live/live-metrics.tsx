@@ -3,13 +3,51 @@ import type { AnalysisConfig } from "@/lib/analysis/config";
 import type { ViewOrientation } from "@/lib/analysis/types";
 import { formatDegrees, formatPercent, formatSeconds } from "@/lib/format";
 import type { LivePhase, LiveState } from "@/lib/live/live-analyzer";
-import type { PauseKind } from "@/lib/live/rep-analysis";
 
-const PAUSE_LABEL: Record<PauseKind, string> = {
-  none: "No pause",
-  brief: "Brief pause",
-  competition: "Competition pause",
-};
+/**
+ * How the last rep reads, from its depth alone.
+ *
+ * Depth is the one thing a lifter wants to know about the rep they just did,
+ * and it is measured directly against the configured standard rather than
+ * modelled. The thresholds are the same ones `shallow_depth_percent` and
+ * `good_depth_percent` drive everywhere else, so this card cannot disagree with
+ * the coaching cue or the dashboard.
+ */
+function gradeRep(
+  depthPercent: number | null,
+  config: AnalysisConfig,
+): { label: string; detail: string; className: string } {
+  if (depthPercent === null) {
+    // Missing is not zero: an unmeasurable rep is not a shallow one.
+    return {
+      label: "Depth unknown",
+      detail: "Not enough of the body was tracked to measure this rep.",
+      className: "text-muted-foreground",
+    };
+  }
+
+  const depth = `${Math.round(depthPercent)}% depth`;
+
+  if (depthPercent < config.shallow_depth_percent) {
+    return {
+      label: "Half rep",
+      detail: `${depth}, short of the ${config.shallow_depth_percent}% mark.`,
+      className: "text-amber-300",
+    };
+  }
+  if (depthPercent >= config.good_depth_percent) {
+    return {
+      label: "Good full rep",
+      detail: `${depth}, at or past parallel.`,
+      className: "text-emerald-300",
+    };
+  }
+  return {
+    label: "Full rep",
+    detail: `${depth}, a little short of the ${config.good_depth_percent}% mark.`,
+    className: "text-sky-300",
+  };
+}
 
 /** How each phase reads and colours in the state badge. */
 const PHASE: Record<LivePhase, { label: string; className: string }> = {
@@ -120,29 +158,20 @@ export function LiveMetrics({
 
       {state.lastRep && (
         <div className="border-border/60 bg-card/40 rounded-xl border p-4">
-          <div className="flex items-center justify-between">
-            <p className="text-muted-foreground text-xs font-medium">
-              Last rep · #{state.lastRep.index}
-            </p>
-            {state.lastRep.halfRep && (
-              <span className="inline-flex items-center rounded-full border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[11px] font-medium text-amber-300">
-                Half rep
-              </span>
-            )}
-          </div>
-          <div className="mt-2 flex items-end gap-5">
-            <div>
-              <p className="font-mono text-2xl font-semibold tabular-nums">
-                {state.lastRep.tempo}
-              </p>
-              <p className="text-muted-foreground/80 text-[11px]">
-                tempo · ecc-pause-con
-              </p>
-            </div>
-            <p className="text-muted-foreground pb-1 text-xs">
-              {PAUSE_LABEL[state.lastRep.pauseKind]}
-            </p>
-          </div>
+          <p className="text-muted-foreground text-xs font-medium">
+            Last rep · #{state.lastRep.index}
+          </p>
+          {(() => {
+            const grade = gradeRep(state.lastRep.depthPercent, config);
+            return (
+              <>
+                <p className={`mt-1 text-2xl font-semibold ${grade.className}`}>
+                  {grade.label}
+                </p>
+                <p className="text-muted-foreground mt-0.5 text-xs">{grade.detail}</p>
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

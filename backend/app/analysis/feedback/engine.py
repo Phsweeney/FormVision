@@ -6,7 +6,14 @@ from collections.abc import Sequence
 
 from app.analysis.feedback.base import FeedbackContext, FeedbackRule
 from app.analysis.feedback.rules import DEFAULT_RULES
-from app.analysis.types import AngleSeries, FeedbackItem, Metrics, Rep, Severity
+from app.analysis.types import (
+    AngleSeries,
+    FaultPrediction,
+    FeedbackItem,
+    Metrics,
+    Rep,
+    Severity,
+)
 from app.config import Settings
 from app.logging_config import get_logger
 
@@ -34,10 +41,15 @@ class FeedbackEngine:
         metrics: Metrics,
         angles: AngleSeries,
         settings: Settings,
+        predictions: Sequence[FaultPrediction] = (),
     ) -> list[FeedbackItem]:
         """Run every rule and return the items that fired, ordered for display."""
         context = FeedbackContext(
-            reps=tuple(reps), metrics=metrics, angles=angles, settings=settings
+            reps=tuple(reps),
+            metrics=metrics,
+            angles=angles,
+            settings=settings,
+            predictions=tuple(predictions),
         )
 
         items: list[tuple[int, int, FeedbackItem]] = []
@@ -72,6 +84,7 @@ def generate_feedback(
     metrics: Metrics,
     angles: AngleSeries,
     settings: Settings,
+    predictions: Sequence[FaultPrediction] = (),
 ) -> list[FeedbackItem]:
     """Convenience wrapper using the default rule set."""
-    return FeedbackEngine().generate(reps, metrics, angles, settings)
+    return FeedbackEngine().generate(reps, metrics, angles, settings, predictions)

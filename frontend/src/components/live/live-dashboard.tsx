@@ -9,9 +9,12 @@ import { Coach, type Cue } from "@/lib/live/coach";
 import { LiveAnalyzer, type LiveState } from "@/lib/live/live-analyzer";
 import { summarizeSession, type SessionSummary } from "@/lib/live/session";
 import { createVoiceCoach, type VoiceCoach } from "@/lib/live/voice";
+import { fetchFaultModels } from "@/lib/ml/classify";
+import type { FaultModelBundle } from "@/lib/ml/model";
 
 import { LiveMetrics } from "./live-metrics";
 import { LiveStage } from "./live-stage";
+import { MlStatusBox } from "./ml-status-box";
 import { WorkoutSummary } from "./workout-summary";
 
 /** Push UI state at most this often; pose still runs every frame underneath. */
@@ -41,6 +44,7 @@ export function LiveDashboard() {
   const latestStateRef = useRef<LiveState | null>(null);
   const lastUiFlushRef = useRef(0);
   const sessionStartMsRef = useRef(0);
+  const modelsRef = useRef<FaultModelBundle | null>(null);
 
   const [state, setState] = useState<LiveState | null>(null);
   const [running, setRunning] = useState(false);
@@ -48,6 +52,9 @@ export function LiveDashboard() {
   const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [speechRate, setSpeechRate] = useState(1);
+  // null until the fetch resolves: the first paint must not claim the model is
+  // unavailable before it has been asked for.
+  const [modelsLoaded, setModelsLoaded] = useState<boolean | null>(null);
 
   // Fetch the shared thresholds once; until then the defaults stand in.
   useEffect(() => {
@@ -55,6 +62,18 @@ export function LiveDashboard() {
     fetchConfig(controller.signal).then((fetched) => {
       configRef.current = fetched;
       setConfig(fetched);
+    });
+    return () => controller.abort();
+  }, []);
+
+  // Fetch the fault detectors once. Like `fetchConfig` above this never
+  // rejects: a missing or corrupt bundle resolves to null, the model box says
+  // so, and every other part of live coaching is unaffected.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchFaultModels(controller.signal).then((bundle) => {
+      modelsRef.current = bundle;
+      setModelsLoaded(bundle !== null);
     });
     return () => controller.abort();
   }, []);
@@ -88,7 +107,7 @@ export function LiveDashboard() {
   const handleRunningChange = useCallback((isRunning: boolean) => {
     setRunning(isRunning);
     if (isRunning) {
-      analyzerRef.current = new LiveAnalyzer(configRef.current);
+      analyzerRef.current = new LiveAnalyzer(configRef.current, modelsRef.current);
       coachRef.current = new Coach(configRef.current);
       sessionStartMsRef.current = performance.now();
       latestStateRef.current = null;
@@ -149,6 +168,22 @@ export function LiveDashboard() {
             </div>
           </div>
         )}
+
+        {/* Under the video rather than in the right-hand column. The right side
+            was carrying the cue, the metrics grid and the summary already, and
+            this box belongs next to the thing it is describing. */}
+        <MlStatusBox
+          verdict={state?.mlVerdict ?? null}
+          available={modelsLoaded}
+          running={running}
+          // The model does not judge depth, so the box has to say so out loud
+          // when the rules have just measured a rep as short. Otherwise "no
+          // fault detected" reads as approval of a rep that was clearly poor.
+          shallowDepthPercent={
+            state?.lastRep?.halfRep ? (state.lastRep.depthPercent ?? null) : null
+          }
+          repInProgress={state !== null && state.phase !== "standing" && state.ready}
+        />
       </div>
 
       <div className="space-y-4">

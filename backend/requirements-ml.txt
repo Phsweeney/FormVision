@@ -1,0 +1,8 @@
+# Training-only dependencies.
+#
+# Inference needs scikit-learn and joblib, so those live in requirements.txt
+# with the rest of the runtime. Only the offline training pipeline reads the
+# CSV corpus, so pandas stays here and never reaches the Docker image.
+-r requirements.txt
+
+pandas==2.3.3

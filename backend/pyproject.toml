@@ -12,6 +12,10 @@ filterwarnings = [
     # MediaPipe and protobuf emit deprecation noise we do not control.
     "ignore::DeprecationWarning:google.*",
     "ignore::DeprecationWarning:mediapipe.*",
+    # joblib still assigns to `ndarray.shape` when unpickling, which NumPy 2.5
+    # deprecated. It fires once per stored array, so loading the model artifact
+    # buries every other warning under tens of thousands of copies.
+    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
 ]
 
 [tool.ruff]

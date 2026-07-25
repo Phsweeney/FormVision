@@ -9,9 +9,13 @@
     "prebuild": "node scripts/setup-live-assets.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
     "test": "vitest",
     "test:run": "vitest run"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

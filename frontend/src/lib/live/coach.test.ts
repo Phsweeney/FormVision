@@ -46,6 +46,9 @@ function stateWith(rep: LiveRep): LiveState {
     currentTorsoLeanDeg: null,
     currentRepElapsedS: null,
     lastRep: rep,
+    // The coach is rule-based and must stay that way. Pinned as null here so
+    // that if a model verdict ever starts influencing a cue, these tests fail.
+    mlVerdict: null,
   };
 }
 

@@ -2,7 +2,7 @@
 
 Wires the stages together in order:
 
-    video -> pose -> angles -> reps -> metrics -> feedback
+    video -> pose -> angles -> reps -> metrics -> predictions -> feedback
                   \\-> skeleton overlay
 
 This module contains no analysis logic of its own — deliberately. It is
@@ -24,10 +24,16 @@ from app.analysis.overlay import render_overlay
 from app.analysis.pose.base import PoseEstimator
 from app.analysis.pose.registry import create_estimator
 from app.analysis.reps import detect_reps
-from app.analysis.types import AnalysisResult, PoseSeries, VideoMetadata
+from app.analysis.types import (
+    AnalysisResult,
+    FaultPrediction,
+    PoseSeries,
+    VideoMetadata,
+)
 from app.config import Settings, get_settings
 from app.core.exceptions import VideoProcessingError
 from app.logging_config import get_logger
+from app.ml.registry import create_predictor
 
 logger = get_logger(__name__)
 
@@ -82,10 +88,21 @@ def run_pipeline(
     # --- 4. Aggregate metrics ----------------------------------------------
     metrics = compute_metrics(reps, angles, metadata.duration_s, settings)
 
-    # --- 5. Coaching feedback ----------------------------------------------
-    feedback = generate_feedback(reps, metrics, angles, settings)
+    # --- 5. Model predictions ----------------------------------------------
+    # Wrapped like the overlay below, and for the same reason: this is an
+    # addition to an analysis that is already complete and correct without it.
+    # A missing artifact, an unreadable pickle, or a scikit-learn that will not
+    # import must all cost the model's opinion and nothing else.
+    predictions: list[FaultPrediction] = []
+    try:
+        predictions = create_predictor(settings).predict(angles, reps, settings)
+    except Exception:
+        logger.exception("Fault prediction failed; continuing without it")
 
-    # --- 6. Skeleton overlay -----------------------------------------------
+    # --- 6. Coaching feedback ----------------------------------------------
+    feedback = generate_feedback(reps, metrics, angles, settings, predictions)
+
+    # --- 7. Skeleton overlay -----------------------------------------------
     written_overlay: Path | None = None
     if overlay_path is not None:
         try:
@@ -100,10 +117,11 @@ def run_pipeline(
 
     duration = time.perf_counter() - started
     logger.info(
-        "Pipeline complete in %.1fs: %d reps, %d feedback items",
+        "Pipeline complete in %.1fs: %d reps, %d feedback items, %d predictions",
         duration,
         len(reps),
         len(feedback),
+        len(predictions),
     )
 
     return PipelineOutput(
@@ -114,6 +132,7 @@ def run_pipeline(
             metrics=metrics,
             feedback=tuple(feedback),
             estimator_name=pose.estimator_name,
+            predictions=tuple(predictions),
         ),
         landmark_payload=unwrap_landmarks(pose),
         overlay_path=written_overlay,

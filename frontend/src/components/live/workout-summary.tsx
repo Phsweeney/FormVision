@@ -30,7 +30,6 @@ export function WorkoutSummary({ summary }: { summary: SessionSummary }) {
           value={formatPercent(summary.avgDepthPercent)}
           meter={summary.avgDepthPercent}
         />
-        <MetricCard label="Average tempo" value={summary.avgTempo ?? "—"} />
         <MetricCard
           label="Working time"
           value={formatDuration(summary.workingTimeS)}

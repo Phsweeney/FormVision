@@ -14,3 +14,7 @@
 *.task binary
 *.woff binary
 *.woff2 binary
+
+# Trained model bundles. A pickle that has had its line endings rewritten does
+# not merely diff badly, it fails to load.
+*.joblib binary

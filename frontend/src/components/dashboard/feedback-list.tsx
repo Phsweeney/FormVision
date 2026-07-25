@@ -75,6 +75,32 @@ const SEVERITY: Record<
 };
 
 /**
+ * Marks advice that came from a trained model rather than a measurement.
+ *
+ * Deliberately a separate badge with its own colour rather than a word folded
+ * into the message. Two reasons: a lifter deciding whether to change how they
+ * squat should be able to see at a glance which advice is a measured fact and
+ * which is a model's opinion, and the distinction survives translation or
+ * rewording of the copy because it is keyed on `source`, not on the text.
+ *
+ * The confidence is shown alongside, because a probability presented without
+ * its number reads as certainty.
+ */
+function ModelBadge({ confidence }: { confidence?: number | null }) {
+  const percent =
+    typeof confidence === "number" ? `${Math.round(confidence * 100)}%` : null;
+
+  return (
+    <span
+      className="rounded-full border border-violet-500/30 bg-violet-500/5 px-1.5 py-0.5 text-[10px] font-medium text-violet-400"
+      title="Predicted by a model trained on squat pose data, not measured directly."
+    >
+      {percent ? `Model · ${percent}` : "Model"}
+    </span>
+  );
+}
+
+/**
  * The coaching panel.
  *
  * The backend has already ordered these — problems above praise, and within
@@ -113,6 +139,9 @@ export function FeedbackList({ items }: { items: FeedbackItem[] }) {
                   >
                     {style.label}
                   </span>
+                  {item.source === "model" ? (
+                    <ModelBadge confidence={item.confidence} />
+                  ) : null}
                 </div>
 
                 <p className="mt-1.5 text-sm leading-relaxed">{item.message}</p>

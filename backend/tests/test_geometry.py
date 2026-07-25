@@ -15,6 +15,7 @@ from app.analysis.geometry import (
     angle_between_points,
     angle_from_vertical,
     clamp,
+    horizontal_offset_from_line,
     joint_angle,
     landmark_distance,
     linear_scale,
@@ -155,6 +156,46 @@ class TestHelpers:
 
     def test_linear_scale_zero_span(self):
         assert linear_scale(5.0, 3.0, 3.0) == 0.0
+
+
+class TestHorizontalOffsetFromLine:
+    """The valgus primitive, on numbers that can be checked by hand."""
+
+    def test_point_on_the_line_reads_zero(self):
+        """A knee exactly on the hip-ankle line has not deviated."""
+        assert horizontal_offset_from_line((0.5, 0.5), (0.5, 0.0), (0.5, 1.0)) == (
+            pytest.approx(0.0)
+        )
+
+    def test_offset_is_measured_at_the_point_own_height(self):
+        """Halfway down a line that slopes 0.2 to the right, the line is at 0.6.
+
+        A point at x=0.5 is therefore 0.1 to the *left* of it, which is negative.
+        """
+        assert horizontal_offset_from_line(
+            (0.5, 0.5), (0.5, 0.0), (0.7, 1.0)
+        ) == pytest.approx(-0.1)
+
+    def test_sign_follows_image_x(self):
+        """Right of the line is positive; left is negative. Nothing anatomical here."""
+        right = horizontal_offset_from_line((0.6, 0.5), (0.5, 0.0), (0.5, 1.0))
+        left = horizontal_offset_from_line((0.4, 0.5), (0.5, 0.0), (0.5, 1.0))
+        assert right == pytest.approx(0.1)
+        assert left == pytest.approx(-0.1)
+
+    def test_horizontal_line_is_undefined(self):
+        """With no vertical span there is no height at which to sample the line.
+
+        This is the frame cropped mid-shin, not a pathological input, so it must
+        come back as "no measurement" rather than as a zero deviation.
+        """
+        assert horizontal_offset_from_line((0.5, 0.5), (0.2, 0.4), (0.8, 0.4)) is None
+
+    def test_direction_of_the_line_does_not_change_the_answer(self):
+        """Measuring hip-to-ankle or ankle-to-hip must give the same offset."""
+        down = horizontal_offset_from_line((0.55, 0.5), (0.5, 0.0), (0.7, 1.0))
+        up = horizontal_offset_from_line((0.55, 0.5), (0.7, 1.0), (0.5, 0.0))
+        assert down == pytest.approx(up)
 
 
 def test_radians_degrees_sanity():

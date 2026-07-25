@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { emptyAngleSeries } from "@/lib/analysis/angles";
 import { DEFAULT_CONFIG } from "@/lib/analysis/config";
 import { buildSquatSeries } from "@/lib/analysis/synthetic";
 import type { AngleSeries, Rep } from "@/lib/analysis/types";
@@ -7,22 +8,17 @@ import type { AngleSeries, Rep } from "@/lib/analysis/types";
 import { LiveAnalyzer } from "./live-analyzer";
 import { analyzeRep } from "./rep-analysis";
 
-/** Build a minimal AngleSeries carrying only the signals analyzeRep reads. */
+/**
+ * Build a minimal AngleSeries carrying only the signals analyzeRep reads.
+ *
+ * Built from `emptyAngleSeries` rather than a literal so that adding a signal
+ * to `AngleSeries` does not require editing this fixture.
+ */
 function bufferFrom(hipHeight: (number | null)[], fps = 30): AngleSeries {
   return {
+    ...emptyAngleSeries(1, 1, "front"),
     timestampsS: hipHeight.map((_, i) => i / fps),
-    leftKneeDeg: [],
-    rightKneeDeg: [],
-    hipDeg: [],
-    torsoLeanDeg: [],
     hipHeight,
-    hipKneeOffset: [],
-    valid: [],
-    leftLegValid: [],
-    rightLegValid: [],
-    torsoScale: 1,
-    thighScale: 1,
-    view: "front",
   };
 }
 

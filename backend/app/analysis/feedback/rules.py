@@ -17,6 +17,7 @@ Confidently wrong coaching is worse than coaching that admits its assumptions.
 from __future__ import annotations
 
 from app.analysis.feedback.base import FeedbackContext, FeedbackRule
+from app.analysis.feedback.ml_rules import MODEL_RULES
 from app.analysis.types import FeedbackItem, Severity, ViewOrientation
 
 
@@ -377,6 +378,10 @@ class TempoRule(FeedbackRule):
 
 #: The rules evaluated for every analysis, in registration order. The engine
 #: sorts by `priority`, so this list only needs to be complete, not ordered.
+#:
+#: The model-backed rules are appended rather than interleaved, and they stay
+#: silent whenever the ML layer has nothing to say, so this tuple describes the
+#: same behaviour as before when no artifact is present.
 DEFAULT_RULES: tuple[type[FeedbackRule], ...] = (
     NoRepsDetectedRule,
     TrackingQualityRule,
@@ -386,4 +391,5 @@ DEFAULT_RULES: tuple[type[FeedbackRule], ...] = (
     AsymmetryRule,
     ConsistencyRule,
     TempoRule,
+    *MODEL_RULES,
 )

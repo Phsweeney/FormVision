@@ -256,6 +256,68 @@ class Settings(BaseSettings):
         ),
     )
 
+    # -- Machine learning ----------------------------------------------------
+    #
+    # Note what is *not* here: the per-fault probability thresholds. Those are
+    # chosen by cross-validation against particular fitted weights, are
+    # meaningless beside any other weights, and so travel inside the artifact
+    # and its model card. The knobs below are policy, and policy can only ever
+    # make the model quieter than its own thresholds, never louder.
+    ml_enabled: bool = Field(
+        default=True,
+        description=(
+            "Whether model-derived coaching is produced at all. On, because the "
+            "detectors are quiet rather than wrong when they are unsure: a sweep "
+            "of 348 rep-level predictions over clean clips produced no firings "
+            "at all, and the asymmetry detector discriminates correctly on "
+            "FormVision's own pose data. Valgus and heel lift remain unproven "
+            "against real footage, and their failure mode is silence. Applies to "
+            "uploaded videos only; the browser live mode is rule-based."
+        ),
+    )
+    ml_predictor: str = Field(
+        default="sklearn",
+        description="Which registered fault predictor to use.",
+    )
+    ml_model_path: Path = Field(
+        default=BACKEND_ROOT / "app" / "ml" / "artifacts" / "squat_faults_v1.joblib",
+        description=(
+            "Trained detector bundle. A missing file is not an error: the "
+            "predictor logs it once and stays silent."
+        ),
+    )
+    ml_min_feature_completeness: float = Field(
+        default=0.75,
+        description=(
+            "Share of a detector's inputs that must have been measured before "
+            "it may speak. A valgus verdict resting on a camera angle that "
+            "cannot see the frontal plane is not a verdict."
+        ),
+    )
+    ml_min_affected_fraction: float = Field(
+        default=0.25,
+        description=(
+            "Share of a rep's frames that must clear the model's own threshold "
+            "before the rep counts as showing the fault. The model is "
+            "calibrated per frame, so this is what turns frame-level evidence "
+            "into a claim about a repetition, and it is what stops a single "
+            "noisy frame becoming coaching."
+        ),
+    )
+    ml_min_affected_rep_fraction: float = Field(
+        default=0.34,
+        description=(
+            "Share of judged reps that must show a fault before it is worth "
+            "mentioning, rounded up, never less than one rep. "
+            "One flagged rep in ten is as likely a tracking artefact as a "
+            "technique fault; one in two is half the evidence in the clip. An "
+            "absolute count cannot express both, and gets stricter the shorter "
+            "the clip, which is backwards: at a count of two, a two-rep clip "
+            "demanded unanimity and stayed silent on a genuinely one-sided "
+            "squat that rep one had flagged at full confidence."
+        ),
+    )
+
     # -- API response shaping ------------------------------------------------
     max_series_points: int = Field(
         default=600,

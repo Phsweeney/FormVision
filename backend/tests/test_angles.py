@@ -364,3 +364,139 @@ class TestEmptyAndDegenerate:
         angles.right_knee_deg[0] = None
         mean = angles.mean_knee_deg
         assert mean[0] == pytest.approx(angles.left_knee_deg[0])
+
+
+#: The signals added for the ML layer. Grouped so the length and gating tests
+#: below cannot drift out of sync with the dataclass.
+_PER_SIDE_SIGNALS = (
+    "left_hip_deg",
+    "right_hip_deg",
+    "left_ankle_deg",
+    "right_ankle_deg",
+    "left_knee_lateral",
+    "right_knee_lateral",
+)
+
+
+class TestPerSideSignals:
+    """Per-side hip and ankle angles, and the knee's medial offset."""
+
+    def test_every_signal_is_frame_aligned(self, settings):
+        series = build_squat_series(reps=2)
+        angles = compute_angles(series, settings)
+
+        for name in _PER_SIDE_SIGNALS:
+            assert len(getattr(angles, name)) == len(series.frames), name
+
+    def test_undetected_frames_are_missing_not_zero(self, settings):
+        """A frame with no subject must not report a zero-degree joint.
+
+        Zero is a real reading — a fully folded joint, or a knee exactly on its
+        hip-ankle line — so it cannot double as "no measurement".
+        """
+        series = build_squat_series(reps=1, undetected_frames=tuple(range(20, 30)))
+        angles = compute_angles(series, settings)
+
+        for name in _PER_SIDE_SIGNALS:
+            assert angles.__getattribute__(name)[25] is None, name
+
+    def test_per_side_hip_angles_bracket_the_midpoint_angle(self, settings):
+        """Each side's hip angle should sit near the midpoint-derived one.
+
+        They are not identical and should not be: the shoulders are wider than
+        the hips, so each side's torso segment is tilted a couple of degrees
+        relative to the body's centre line. Agreement to within ten degrees is
+        the real geometric relationship.
+        """
+        angles = compute_angles(build_squat_series(reps=2), settings)
+
+        compared = 0
+        for mid, left, right in zip(
+            angles.hip_deg, angles.left_hip_deg, angles.right_hip_deg, strict=True
+        ):
+            if None in (mid, left, right):
+                continue
+            assert left == pytest.approx(mid, abs=10.0)
+            assert right == pytest.approx(mid, abs=10.0)
+            compared += 1
+
+        assert compared > 0
+
+
+class TestViewGating:
+    """Each new signal is silent from the camera angle that cannot see it."""
+
+    def test_valgus_is_measured_front_on_and_withheld_side_on(self, settings):
+        front = compute_angles(
+            build_squat_series(reps=1, view=ViewOrientation.FRONT), settings
+        )
+        side = compute_angles(
+            build_squat_series(reps=1, view=ViewOrientation.SIDE), settings
+        )
+
+        assert any(value is not None for value in front.left_knee_lateral)
+        assert any(value is not None for value in front.right_knee_lateral)
+
+        # Side-on, a knee projects onto its own hip-to-ankle line however far it
+        # has actually collapsed inward, so the number would be a confident zero
+        # for a lifter whose knees are caving badly.
+        assert all(value is None for value in side.left_knee_lateral)
+        assert all(value is None for value in side.right_knee_lateral)
+
+    def test_ankle_angle_is_measured_side_on_and_withheld_front_on(self, settings):
+        front = compute_angles(
+            build_squat_series(reps=1, view=ViewOrientation.FRONT), settings
+        )
+        side = compute_angles(
+            build_squat_series(reps=1, view=ViewOrientation.SIDE), settings
+        )
+
+        assert any(value is not None for value in side.left_ankle_deg)
+        assert any(value is not None for value in side.right_ankle_deg)
+
+        # Front-on the foot points at the lens, so shin-over-foot travel barely
+        # projects into the image at all. Same reasoning as torso lean.
+        assert all(value is None for value in front.left_ankle_deg)
+        assert all(value is None for value in front.right_ankle_deg)
+
+
+class TestValgusSign:
+    """Knees caving inward must read positive, on both sides."""
+
+    def test_medial_knee_travel_raises_both_sides(self, settings):
+        """Adding valgus to the figure increases the measured offset on both legs.
+
+        Measured as a change against the same clip without it rather than as an
+        absolute value, because the synthetic figure bends both knees toward +x
+        in the image, which lands medially on one leg and laterally on the other.
+        The *difference* isolates the medial travel, which is the quantity the
+        sign convention is about.
+        """
+        neutral = compute_angles(
+            build_squat_series(reps=2, view=ViewOrientation.FRONT), settings
+        )
+        caving = compute_angles(
+            build_squat_series(reps=2, view=ViewOrientation.FRONT, knee_valgus=0.35),
+            settings,
+        )
+
+        for name in ("left_knee_lateral", "right_knee_lateral"):
+            before = [v for v in getattr(neutral, name) if v is not None]
+            after = [v for v in getattr(caving, name) if v is not None]
+            assert before and after
+
+            shift = sum(after) / len(after) - sum(before) / len(before)
+            # Both knees moved toward the midline, so both must read *more*
+            # medial. A sign error on either side would flip this negative.
+            assert shift > 0.1, f"{name} shifted by {shift:.3f}"
+
+    def test_offset_scales_with_how_far_the_knees_cave(self, settings):
+        """Twice the medial travel must read as a larger offset, not merely nonzero."""
+        mild = compute_angles(build_squat_series(reps=1, knee_valgus=0.2), settings)
+        severe = compute_angles(build_squat_series(reps=1, knee_valgus=0.5), settings)
+
+        def mean_offset(angles) -> float:
+            values = [v for v in angles.left_knee_lateral if v is not None]
+            return sum(values) / len(values)
+
+        assert mean_offset(severe) > mean_offset(mild)

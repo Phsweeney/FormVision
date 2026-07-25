@@ -25,3 +25,17 @@ numpy>=1.26,<3
 # Ships a static ffmpeg binary so overlay videos can be encoded as H.264/yuv420p,
 # which every browser can play. OpenCV's bundled `mp4v` encoder cannot.
 imageio-ffmpeg==0.6.0
+
+# --- Machine learning (inference) --------------------------------------------
+# Needed to unpickle and score the fault-detection models. Pinned exactly rather
+# than loosely: a scikit-learn version mismatch between the process that wrote a
+# pickle and the one that reads it is a documented source of silent breakage, so
+# the training version is recorded in the model card and checked on load.
+#
+# The app degrades cleanly without these. If the import fails the predictor
+# resolves to its null implementation and the pipeline behaves exactly as it did
+# before the ML layer existed, so a deployment that cannot afford the ~100 MB
+# scipy brings with it can drop both lines and lose only the model-backed
+# feedback.
+scikit-learn==1.7.2
+joblib==1.5.2

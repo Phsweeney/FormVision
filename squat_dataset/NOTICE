@@ -1,0 +1,57 @@
+Squat Exercise Pose Dataset
+===========================
+
+Source:    https://www.kaggle.com/datasets/thashmiladewmini/squat-exercise-pose-dataset
+Author:    thashmiladewmini
+Licence:   Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+           https://creativecommons.org/licenses/by-sa/4.0/
+Retrieved: 2026-07-24
+
+File:      squat_features_augmented.csv
+SHA-256:   d29a7d0bbce4df5f71a196a1a61c23bc1cf23168c311ad6e98e626039540c5fa
+
+The digest pins exactly which revision of the data produced a given model.
+`backend/app/ml/artifacts/model_card.json` records the same value, so any
+trained artifact can be traced back to the file it came from.
+
+
+Licence scope
+-------------
+
+CC BY-SA 4.0 is a share-alike licence. The obligation attaches to this dataset
+file and to derivative *datasets*, not to FormVision's own source code, which
+is unaffected. Model weights trained from it are recorded in the model card as
+derived from this dataset either way.
+
+
+What this data is, as verified rather than as described
+-------------------------------------------------------
+
+The upstream README describes six classes of squat form. Profiling the file
+before using it established what it actually contains, and the findings shape
+how `backend/training/` reads it:
+
+  * All fifteen source videos (co1.mp4 - co15.mp4) are *correct* squats.
+    7,907 frames in total.
+
+  * Every "incorrect" example is one of those correct frames with a uniform
+    random offset added to one group of columns. Each frame therefore appears
+    six times, once per label. This is stated openly in the upstream README
+    under "Data Generation" and is not a defect, but it does mean the labels
+    describe an arithmetic operation rather than an observed movement.
+
+  * `spine_angle` is a byte-for-byte duplicate of `left_hip_angle`, and the
+    augmentation perturbs one without the other. Their difference is exactly
+    0.0 for labels {0, 3, 4} and non-zero for {1, 2, 5}, which identifies the
+    label group with certainty. The column is dropped.
+
+  * `symmetry_score` and `hip_depth` are never recomputed after perturbation,
+    so the "asymmetric" class carries the symmetry score of the correct frame
+    it came from. `symmetry_score` is dropped; `hip_depth` is kept strictly as
+    a phase covariate and never as evidence of depth.
+
+  * Because those columns are float-identical across all six rows derived from
+    one frame, train/test splits must be grouped by `video_file`.
+
+See `backend/training/corpus.py` for the code these findings produced, and
+`backend/training/tests/test_corpus.py` for the tests that keep them true.

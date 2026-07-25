@@ -123,6 +123,8 @@ def build_frame(
     knee_forward: float = 1.0,
     left_right_bias: float = 0.0,
     hip_setback: float = 0.0,
+    knee_valgus: float = 0.0,
+    valgus_depth_scale: float = 1.0,
     visibility: float = 0.95,
     detected: bool = True,
     view: ViewOrientation = ViewOrientation.FRONT,
@@ -143,6 +145,18 @@ def build_frame(
             hip stacked directly over the ankle, a symmetric two-link leg always
             places the knee at the midpoint, so depth past parallel is
             geometrically impossible. Real lifters sit back; so does this figure.
+        knee_valgus: Medial knee travel at full depth, as a fraction of a thigh
+            length. Both knees are displaced toward the midline, which is the
+            geometry of knees caving in. Applied after the two-link leg is
+            solved, so it genuinely moves the knee off its own hip-to-ankle
+            line, which is the quantity `angles.py` measures.
+        valgus_depth_scale: How much of `knee_valgus` applies in this frame,
+            normally the frame's depth as a 0-1 fraction. Real valgus appears
+            under load and disappears at lockout; nobody's knees cave while they
+            are standing. Modelling it as constant makes a clip whose valgus
+            never varies, which is the one case within-clip analysis cannot see,
+            so a constant figure would be testing the pathological case rather
+            than the real one.
         visibility: Confidence written onto every landmark.
         detected: When False, the frame carries no landmarks at all.
         view: Camera angle. Compresses the figure's left/right separation, which
@@ -204,6 +218,12 @@ def build_frame(
         knee_x, knee_y = _leg_geometry(
             (hip_x + offset, hip_y), (ankle_x, ankle_y), knee_forward
         )
+        # Medial is toward the midline, which is +x for the left leg and -x for
+        # the right. Scaled by `lateral` so a side-on figure, whose two sides
+        # are collapsed onto each other in the image, does not acquire a valgus
+        # displacement the camera could never have seen.
+        medial = 1.0 if side_hip == LM.LEFT_HIP else -1.0
+        knee_x += medial * knee_valgus * valgus_depth_scale * THIGH * lateral
         place(side_knee, knee_x, knee_y)
         place(side_ankle, ankle_x, ankle_y)
 
@@ -224,6 +244,7 @@ def build_squat_series(
     torso_lean_deg: float = 12.0,
     bottom_lean_deg: float | None = None,
     left_right_bias: float = 0.0,
+    knee_valgus: float = 0.0,
     depth_jitter: float = 0.0,
     undetected_frames: tuple[int, ...] = (),
     width: int = 720,
@@ -242,6 +263,8 @@ def build_squat_series(
         depth_fraction: 1.0 descends to full depth; 0.5 is a half squat.
         bottom_lean_deg: Lean at the bottom, interpolated from
             ``torso_lean_deg`` at the top. Used to test the forward-lean rule.
+        knee_valgus: Medial knee travel as a fraction of a thigh length, held
+            constant through the clip. Front-on only in effect; see `build_frame`.
         depth_jitter: Per-rep variation in depth, to test the consistency rule.
         undetected_frames: Frame indices where the subject is not found, to
             test gap handling.
@@ -263,7 +286,7 @@ def build_squat_series(
     frames: list[FramePose] = []
     frame_index = 0
 
-    def emit(hip_y: float, lean: float, setback: float) -> None:
+    def emit(hip_y: float, lean: float, setback: float, depth: float = 0.0) -> None:
         nonlocal frame_index
         frames.append(
             build_frame(
@@ -272,6 +295,11 @@ def build_squat_series(
                 hip_y,
                 torso_lean_deg=lean,
                 left_right_bias=left_right_bias,
+                knee_valgus=knee_valgus,
+                # Valgus follows the descent, so it is absent at lockout and
+                # worst at the bottom, which is where it happens on a real
+                # lifter and what gives it something to stand out against.
+                valgus_depth_scale=depth,
                 hip_setback=setback,
                 detected=frame_index not in undetected_frames,
                 view=view,
@@ -303,6 +331,7 @@ def build_squat_series(
                 hip_y,
                 top_lean + (low_lean - top_lean) * phase,
                 bottom_setback * phase,
+                depth=phase,
             )
 
         for _ in range(pause_frames):

@@ -73,6 +73,35 @@ export function angleFromVertical(lower: Point, upper: Point): number | null {
   return radiansToDegrees(Math.atan2(Math.abs(horizontal), Math.abs(vertical)));
 }
 
+/**
+ * Signed horizontal gap from `point` to the `start -> end` line, sampled at the
+ * point's own height.
+ *
+ * Answers "how far sideways is the knee from where the hip-to-ankle line puts
+ * it", which is what a coach means by a knee tracking inward. Positive means the
+ * point lies to the right of the line in image coordinates (larger x); callers
+ * decide what that means anatomically.
+ *
+ * Returns null when `start` and `end` share a height, since there is then no
+ * line to interpolate along. That is not pathological — it is a frame cropped
+ * mid-shin, or a badly tracked ankle.
+ */
+export function horizontalOffsetFromLine(
+  point: Point,
+  start: Point,
+  end: Point,
+): number | null {
+  const verticalSpan = end[1] - start[1];
+  if (Math.abs(verticalSpan) < EPSILON) return null;
+
+  // Deliberately not clamped to [0, 1]: a knee above the hip or below the ankle
+  // is a tracking failure, and the visibility gates upstream will already have
+  // suppressed it.
+  const ratio = (point[1] - start[1]) / verticalSpan;
+  const expectedX = start[0] + ratio * (end[0] - start[0]);
+  return point[0] - expectedX;
+}
+
 export function clamp(value: number, low: number, high: number): number {
   return Math.max(low, Math.min(high, value));
 }

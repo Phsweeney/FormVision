@@ -17,7 +17,16 @@
  *      window needs do not exist yet.
  */
 
-import { computeAngles, computeRawFrameAngles } from "@/lib/analysis/angles";
+import {
+  NO_GATES,
+  appendFrameAngles,
+  computeAngles,
+  computeRawFrameAngles,
+  emptyAngleSeries,
+  viewGates,
+  type RawFrameAngles,
+  type ViewGates,
+} from "@/lib/analysis/angles";
 import type { AnalysisConfig } from "@/lib/analysis/config";
 import { linearScale } from "@/lib/analysis/geometry";
 import { RepStateMachine, buildRep } from "@/lib/analysis/reps";
@@ -30,6 +39,10 @@ import {
   type FramePose,
   type ViewOrientation,
 } from "@/lib/analysis/types";
+
+import { LiveClassifier, type MlVerdict } from "@/lib/ml/classify";
+import { RunningRanks, derivedValues, frameSample } from "@/lib/ml/features";
+import type { FaultModelBundle } from "@/lib/ml/model";
 
 import { analyzeRep, type LiveRep } from "./rep-analysis";
 import { TrailingAverage } from "./trailing-average";
@@ -58,6 +71,15 @@ export interface LiveState {
   currentRepElapsedS: number | null;
   /** The most recently completed rep, enriched with tempo/pause/half-rep. */
   lastRep: LiveRep | null;
+  /**
+   * What the model currently makes of the squat, or null when it has no model
+   * loaded or too little session history for a rank to mean anything.
+   *
+   * Purely a readout. It never reaches the cue banner or the voice coach, which
+   * stay rule-based: a per-frame classification is a reasonable thing to display
+   * and a bad thing to shout at someone mid-rep.
+   */
+  mlVerdict: MlVerdict | null;
 }
 
 /** Minimum detected frames before calibration is trusted. */
@@ -78,22 +100,26 @@ const STILL_WINDOW_S = 0.5;
 const STILLNESS_TOLERANCE = 0.03;
 
 function emptySeries(view: ViewOrientation): AngleSeries {
-  return {
-    timestampsS: [],
-    leftKneeDeg: [],
-    rightKneeDeg: [],
-    hipDeg: [],
-    torsoLeanDeg: [],
-    hipHeight: [],
-    hipKneeOffset: [],
-    valid: [],
-    leftLegValid: [],
-    rightLegValid: [],
-    torsoScale: null,
-    thighScale: null,
-    view,
-  };
+  return emptyAngleSeries(null, null, view);
 }
+
+/** The per-frame signals added for the model, which need their own smoothers. */
+type ModelSignal =
+  | "leftHipDeg"
+  | "rightHipDeg"
+  | "leftAnkleDeg"
+  | "rightAnkleDeg"
+  | "leftKneeLateral"
+  | "rightKneeLateral";
+
+const MODEL_SIGNALS: readonly ModelSignal[] = [
+  "leftHipDeg",
+  "rightHipDeg",
+  "leftAnkleDeg",
+  "rightAnkleDeg",
+  "leftKneeLateral",
+  "rightKneeLateral",
+];
 
 export class LiveAnalyzer {
   private calibrating = true;
@@ -108,7 +134,7 @@ export class LiveAnalyzer {
   private torsoScale: number | null = null;
   private thighScale: number | null = null;
   private view: ViewOrientation = "unknown";
-  private leanIsMeasurable = true;
+  private gates: ViewGates = NO_GATES;
   private baseline = 0;
   private bottomReference = 0;
   private ready = false;
@@ -120,6 +146,14 @@ export class LiveAnalyzer {
   private leanSmoother: TrailingAverage | null = null;
   private offsetSmoother: TrailingAverage | null = null;
 
+  /**
+   * Smoothers for the six signals only the model consumes. Grouped rather than
+   * given a field each because none of them is referenced outside the ML path,
+   * and eleven named smoother fields would bury the five that the live metrics
+   * actually read.
+   */
+  private modelSmoothers: Record<ModelSignal, TrailingAverage> | null = null;
+
   private buffer: AngleSeries = emptySeries("unknown");
   private liveIndex = 0;
 
@@ -129,7 +163,20 @@ export class LiveAnalyzer {
   private repStartTs: number | null = null;
   private bottomHoldUntilS = 0;
 
-  constructor(private readonly config: AnalysisConfig) {}
+  /** The session's own distribution of each quantity, for within-clip ranking. */
+  private readonly ranks = new RunningRanks();
+  private classifier: LiveClassifier | null = null;
+  private mlVerdict: MlVerdict | null = null;
+
+  /**
+   * @param models Exported fault detectors, or null to run with no model at
+   *   all. Optional so every existing caller and test is unchanged, and so the
+   *   analyzer never depends on a network fetch having succeeded.
+   */
+  constructor(
+    private readonly config: AnalysisConfig,
+    private readonly models: FaultModelBundle | null = null,
+  ) {}
 
   /** Completed reps so far this session. */
   get reps(): LiveRep[] {
@@ -157,16 +204,21 @@ export class LiveAnalyzer {
     this.phase = "waiting";
     this.repStartTs = null;
     this.view = "unknown";
+    this.ranks.reset();
+    this.classifier = null;
+    this.mlVerdict = null;
   }
 
   // --- Calibration -------------------------------------------------------
 
   private calibrate(frame: FramePose): LiveState {
+    // Nothing is measurable yet: scale and view are exactly what calibration is
+    // about to establish, so every view-gated signal is suppressed until it has.
     const raw = computeRawFrameAngles(
       frame,
       null,
       null,
-      false,
+      NO_GATES,
       this.config.landmark_visibility_threshold,
     );
     const knee = smallestPresent(raw.leftKneeDeg, raw.rightKneeDeg);
@@ -223,6 +275,9 @@ export class LiveAnalyzer {
       currentTorsoLeanDeg: null,
       currentRepElapsedS: null,
       lastRep: null,
+      // Nothing to say until the camera view is known and the session has some
+      // history to rank against.
+      mlVerdict: null,
     };
   }
 
@@ -259,7 +314,7 @@ export class LiveAnalyzer {
     this.torsoScale = angles.torsoScale;
     this.thighScale = angles.thighScale;
     this.view = angles.view;
-    this.leanIsMeasurable = angles.view !== "front";
+    this.gates = viewGates(angles.view);
 
     const standingHeights = angles.hipHeight.filter((v): v is number => v !== null);
     this.baseline = median(standingHeights) ?? 0;
@@ -275,6 +330,14 @@ export class LiveAnalyzer {
     this.rightKneeSmoother = new TrailingAverage(window);
     this.leanSmoother = new TrailingAverage(window);
     this.offsetSmoother = new TrailingAverage(window);
+    this.modelSmoothers = Object.fromEntries(
+      MODEL_SIGNALS.map((name) => [name, new TrailingAverage(window)]),
+    ) as Record<ModelSignal, TrailingAverage>;
+
+    // Built here rather than in the constructor because it needs the camera
+    // view, which is exactly what calibration has just established, and the
+    // view is what decides which faults are assessable at all.
+    this.classifier = this.models ? new LiveClassifier(this.models) : null;
 
     const { descend, ascend } = this.thresholds();
     this.machine = new RepStateMachine(descend, ascend);
@@ -282,6 +345,61 @@ export class LiveAnalyzer {
     this.liveIndex = 0;
     this.calibrating = false;
     this.phase = "standing";
+  }
+
+  /**
+   * Score this frame with the model, and fold it into the session distribution.
+   *
+   * Ranking against the session so far is the live counterpart of the backend's
+   * ranking against a whole clip: mid-session, the past is all there is. The
+   * value is inserted *before* it is ranked so a frame is always ranked within a
+   * population that includes itself, matching the batch behaviour.
+   *
+   * Wrapped so a model failure costs the readout and nothing else. This runs
+   * inside the camera loop, and an exception here would take rep counting and
+   * the coach down with it.
+   */
+  private updateModel(smoothed: RawFrameAngles, moving: boolean): void {
+    if (!this.classifier) return;
+    try {
+      const values = derivedValues(frameSample(smoothed));
+      // Every frame joins the distribution, standing ones included, matching
+      // what the backend ranks against. Excluding them was tried and made real
+      // footage measurably worse; see the note in `app/ml/predictor.py`. The
+      // cost is that long rests between reps quieten the detectors, which is a
+      // documented limitation rather than something fixed here.
+      this.ranks.insert(values);
+
+      // Scoring, though, is restricted to frames where the lifter is moving.
+      // The backend does the same by scoring within rep windows, and the
+      // difference is not cosmetic: on a clean synthetic squat, 41% of all
+      // frames cleared the valgus threshold but only 2% of the frames inside a
+      // rep did. Standing between reps is a near-constant pose whose ranks say
+      // nothing about technique.
+      if (!moving) return;
+      this.classifier.observe(values, this.ranks);
+    } catch {
+      this.classifier = null;
+      this.mlVerdict = null;
+    }
+  }
+
+  /**
+   * Close out the model's view of a repetition that has just been counted.
+   *
+   * The verdict then stands until the next rep finishes, which is the whole
+   * point: one stable answer per rep rather than a readout that changes thirty
+   * times a second and tells you nothing about what just happened.
+   */
+  private completeModelRep(repIndex: number, hasPriorRep: boolean): void {
+    if (!this.classifier) return;
+    try {
+      const verdict = this.classifier.completeRep(repIndex, hasPriorRep);
+      if (verdict !== null) this.mlVerdict = verdict;
+    } catch {
+      this.classifier = null;
+      this.mlVerdict = null;
+    }
   }
 
   /** Rep thresholds from the baseline and the deepest point seen so far. */
@@ -303,7 +421,7 @@ export class LiveAnalyzer {
       frame,
       this.torsoScale,
       this.thighScale,
-      this.leanIsMeasurable,
+      this.gates,
       this.config.landmark_visibility_threshold,
     );
 
@@ -313,17 +431,25 @@ export class LiveAnalyzer {
     const lean = this.leanSmoother!.push(raw.torsoLeanDeg);
     const offset = this.offsetSmoother!.push(raw.hipKneeOffset);
 
+    // The live path stores *smoothed* values where the batch path smooths the
+    // arrays afterwards. Rebuilding the frame record with the smoothed numbers
+    // in place lets both share one append, so a new signal cannot be added to
+    // the batch series and forgotten here.
+    const smoothed: RawFrameAngles = {
+      ...raw,
+      leftKneeDeg: leftKnee,
+      rightKneeDeg: rightKnee,
+      torsoLeanDeg: lean,
+      hipHeight: hip,
+      hipKneeOffset: offset,
+    };
+    for (const name of MODEL_SIGNALS) {
+      smoothed[name] = this.modelSmoothers![name].push(raw[name]);
+    }
+
     // Append to the growing buffer so a completed rep can be measured over it.
     this.buffer.timestampsS.push(frame.timestampS);
-    this.buffer.leftKneeDeg.push(leftKnee);
-    this.buffer.rightKneeDeg.push(rightKnee);
-    this.buffer.hipDeg.push(raw.hipDeg);
-    this.buffer.torsoLeanDeg.push(lean);
-    this.buffer.hipHeight.push(hip);
-    this.buffer.hipKneeOffset.push(offset);
-    this.buffer.valid.push(raw.usable);
-    this.buffer.leftLegValid.push(raw.leftLeg);
-    this.buffer.rightLegValid.push(raw.rightLeg);
+    appendFrameAngles(this.buffer, smoothed);
 
     // Bottom reference: the deepest point of the *current* descent. While the
     // lifter is standing it is pinned to the baseline, so each rep re-derives
@@ -353,6 +479,10 @@ export class LiveAnalyzer {
       this.bottomHoldUntilS = frame.timestampS + BOTTOM_HOLD_S;
     }
 
+    // Score this frame before the rep is closed out below, so the frame that
+    // completes a repetition is counted as part of it.
+    this.updateModel(smoothed, machinePhase !== "standing" || triple !== null);
+
     if (triple) {
       const startTime = this.buffer.timestampsS[triple.start];
       const endTime = this.buffer.timestampsS[triple.end];
@@ -369,6 +499,12 @@ export class LiveAnalyzer {
         if (rep.depthPercent !== null) {
           this.maxDepth = Math.max(this.maxDepth ?? 0, rep.depthPercent);
         }
+        // `length - 1` prior reps: the one just pushed is the one being judged.
+        this.completeModelRep(rep.index, this.repList.length > 1);
+      } else {
+        // Too short to count as a repetition, so its frames must not leak into
+        // the next one's verdict.
+        this.classifier?.resetRep();
       }
       this.repStartTs = null;
     }
@@ -401,6 +537,7 @@ export class LiveAnalyzer {
       currentRepElapsedS:
         this.repStartTs !== null ? frame.timestampS - this.repStartTs : null,
       lastRep: this.repList.at(-1) ?? null,
+      mlVerdict: this.mlVerdict,
     };
   }
 

@@ -72,6 +72,16 @@ export function LiveStage({ onFrame, onRunningChange }: LiveStageProps) {
     runnerRef.current = null;
     stopCamera(streamRef.current, videoRef.current);
     streamRef.current = null;
+
+    // Wipe the overlay. Stopping the loop leaves the last frame's skeleton
+    // painted on the canvas, and the "camera is off" panel is only partly
+    // opaque, so it stayed floating over the blank stage after the session
+    // ended. The canvas is a separate element from the video and nothing else
+    // clears it.
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+
     setStatus("idle");
     setTracking(false);
     setFps(0);

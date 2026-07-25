@@ -18,16 +18,21 @@ a squat — the legs fold, the torso does not.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from app.analysis.geometry import (
     angle_from_vertical,
+    horizontal_offset_from_line,
     joint_angle,
 )
 from app.analysis.smoothing import smooth_series
 from app.analysis.types import (
     CORE_LANDMARKS,
+    LEFT_ANKLE_ANGLE_LANDMARKS,
     LEFT_LEG_LANDMARKS,
+    RIGHT_ANKLE_ANGLE_LANDMARKS,
     RIGHT_LEG_LANDMARKS,
     AngleSeries,
     FramePose,
@@ -98,6 +103,51 @@ def _pair_point(
     return None
 
 
+def _medial_knee_offset(
+    hip: Landmark,
+    knee: Landmark,
+    ankle: Landmark,
+    medial_sign: float,
+    torso_scale: float,
+) -> float | None:
+    """How far the knee has travelled inward off its own hip-to-ankle line.
+
+    Positive is medial (valgus, the knee collapsing toward the midline) and
+    negative is lateral, whichever way the lifter happens to be facing. Scaled
+    by torso length like every other distance in this module, so the threshold
+    that judges it means the same thing at any camera distance.
+    """
+    offset = horizontal_offset_from_line(
+        (knee.x, knee.y), (hip.x, hip.y), (ankle.x, ankle.y)
+    )
+    if offset is None:
+        return None
+    return offset * medial_sign / torso_scale
+
+
+def _medial_sign(frame: FramePose, threshold: float) -> float | None:
+    """Which image direction counts as medial for the *left* leg, as +1 or -1.
+
+    Derived per frame from where the two hips sit rather than assumed, because
+    MediaPipe labels landmarks anatomically: a lifter facing away from the
+    camera has their left hip on the left of the image, and one facing the
+    camera has it on the right. Hard-coding either would silently invert the
+    valgus sign for half of all clips.
+    """
+    left_hip = _visible(frame, LM.LEFT_HIP, threshold)
+    right_hip = _visible(frame, LM.RIGHT_HIP, threshold)
+    if left_hip is None or right_hip is None:
+        return None
+
+    separation = right_hip.x - left_hip.x
+    # Filmed side-on the hips project onto each other and there is no left-right
+    # axis to speak of. The caller gates this to front-on footage anyway; this
+    # guard is what stops a near-zero separation from picking a sign at random.
+    if abs(separation) < 1e-6:
+        return None
+    return 1.0 if separation > 0 else -1.0
+
+
 def _compute_scales(
     series: PoseSeries, threshold: float
 ) -> tuple[float | None, float | None]:
@@ -157,6 +207,16 @@ def compute_angles(series: PoseSeries, settings: Settings) -> AngleSeries:
     # position, it is the absence of a measurement, so it is recorded as one.
     lean_is_measurable = view is not ViewOrientation.FRONT
 
+    # The two new signal families split along the same axis, for the same
+    # reason. Ankle travel is a sagittal movement and shares torso lean's gate.
+    # Knee valgus is a frontal-plane movement and is the mirror image: side-on,
+    # the knee projects onto its own hip-to-ankle line however far it collapses.
+    # Valgus takes the stricter test of the two because a wrongly-signed or
+    # projection-flattened reading would accuse a lifter of a fault they do not
+    # have, and silence is the cheaper error.
+    ankle_is_measurable = lean_is_measurable
+    valgus_is_measurable = view is ViewOrientation.FRONT
+
     for frame in series.frames:
         result.timestamps_s.append(frame.timestamp_s)
         usable = _frame_is_usable(frame, threshold)
@@ -174,6 +234,12 @@ def compute_angles(series: PoseSeries, settings: Settings) -> AngleSeries:
             result.torso_lean_deg.append(None)
             result.hip_height.append(None)
             result.hip_knee_offset.append(None)
+            result.left_hip_deg.append(None)
+            result.right_hip_deg.append(None)
+            result.left_ankle_deg.append(None)
+            result.right_ankle_deg.append(None)
+            result.left_knee_lateral.append(None)
+            result.right_knee_lateral.append(None)
             continue
 
         # Knee: angle at the knee between the thigh and the shin. ~180 when the
@@ -226,6 +292,17 @@ def compute_angles(series: PoseSeries, settings: Settings) -> AngleSeries:
         else:
             result.hip_knee_offset.append(None)
 
+        _append_per_side_signals(
+            result,
+            frame,
+            threshold=threshold,
+            left_leg=left_leg,
+            right_leg=right_leg,
+            torso_scale=torso_scale,
+            ankle_is_measurable=ankle_is_measurable,
+            valgus_is_measurable=valgus_is_measurable,
+        )
+
     _smooth_in_place(result, series.metadata.fps, settings)
 
     logger.info(
@@ -252,6 +329,125 @@ def _angle_at(
     return angle_between_points(first, vertex, second)
 
 
+@dataclass(frozen=True, slots=True)
+class _Side:
+    """One half of the body, so the per-side maths is written once."""
+
+    shoulder: LM
+    hip: LM
+    knee: LM
+    ankle: LM
+    ankle_group: tuple[LM, ...]
+    #: Sign relating this side to `_medial_sign`, which is defined for the left.
+    medial_orientation: float
+
+
+_LEFT_SIDE = _Side(
+    shoulder=LM.LEFT_SHOULDER,
+    hip=LM.LEFT_HIP,
+    knee=LM.LEFT_KNEE,
+    ankle=LM.LEFT_ANKLE,
+    ankle_group=LEFT_ANKLE_ANGLE_LANDMARKS,
+    medial_orientation=1.0,
+)
+_RIGHT_SIDE = _Side(
+    shoulder=LM.RIGHT_SHOULDER,
+    hip=LM.RIGHT_HIP,
+    knee=LM.RIGHT_KNEE,
+    ankle=LM.RIGHT_ANKLE,
+    ankle_group=RIGHT_ANKLE_ANGLE_LANDMARKS,
+    medial_orientation=-1.0,
+)
+
+
+def _side_signals(
+    frame: FramePose,
+    side: _Side,
+    *,
+    threshold: float,
+    leg_visible: bool,
+    torso_scale: float | None,
+    medial_sign: float | None,
+    ankle_is_measurable: bool,
+) -> tuple[float | None, float | None, float | None]:
+    """Hip angle, ankle angle, and medial knee offset for one side of one frame.
+
+    Every one of the three is independently `None`-able. A frame can easily
+    yield a hip angle but no ankle angle, because the foot left the bottom of
+    the shot, and that must cost the ankle angle only.
+    """
+    hip = _visible(frame, side.hip, threshold)
+    knee = _visible(frame, side.knee, threshold)
+    ankle = _visible(frame, side.ankle, threshold)
+    shoulder = _visible(frame, side.shoulder, threshold)
+
+    hip_deg: float | None = None
+    if leg_visible and shoulder is not None and hip is not None and knee is not None:
+        hip_deg = joint_angle(shoulder, hip, knee)
+
+    ankle_deg: float | None = None
+    if ankle_is_measurable and _group_visible(frame, side.ankle_group, threshold):
+        foot = frame.get(side.ankle_group[-1])
+        if knee is not None and ankle is not None and foot is not None:
+            ankle_deg = joint_angle(knee, ankle, foot)
+
+    knee_lateral: float | None = None
+    if (
+        leg_visible
+        and medial_sign is not None
+        and torso_scale
+        and hip is not None
+        and knee is not None
+        and ankle is not None
+    ):
+        knee_lateral = _medial_knee_offset(
+            hip, knee, ankle, medial_sign * side.medial_orientation, torso_scale
+        )
+
+    return hip_deg, ankle_deg, knee_lateral
+
+
+def _append_per_side_signals(
+    result: AngleSeries,
+    frame: FramePose,
+    *,
+    threshold: float,
+    left_leg: bool,
+    right_leg: bool,
+    torso_scale: float | None,
+    ankle_is_measurable: bool,
+    valgus_is_measurable: bool,
+) -> None:
+    """Append this frame's per-side hip, ankle, and valgus signals."""
+    medial_sign = _medial_sign(frame, threshold) if valgus_is_measurable else None
+
+    left = _side_signals(
+        frame,
+        _LEFT_SIDE,
+        threshold=threshold,
+        leg_visible=left_leg,
+        torso_scale=torso_scale,
+        medial_sign=medial_sign,
+        ankle_is_measurable=ankle_is_measurable,
+    )
+    right = _side_signals(
+        frame,
+        _RIGHT_SIDE,
+        threshold=threshold,
+        leg_visible=right_leg,
+        torso_scale=torso_scale,
+        medial_sign=medial_sign,
+        ankle_is_measurable=ankle_is_measurable,
+    )
+
+    result.left_hip_deg.append(left[0])
+    result.left_ankle_deg.append(left[1])
+    result.left_knee_lateral.append(left[2])
+    result.right_hip_deg.append(right[0])
+    result.right_ankle_deg.append(right[1])
+    result.right_knee_lateral.append(right[2])
+
+
 def _smooth_in_place(series: AngleSeries, fps: float, settings: Settings) -> None:
     """Gap-fill and smooth every signal with identical parameters.
 
@@ -268,6 +464,16 @@ def _smooth_in_place(series: AngleSeries, fps: float, settings: Settings) -> Non
     series.torso_lean_deg = smooth_series(series.torso_lean_deg, fps, seconds, max_gap)
     series.hip_height = smooth_series(series.hip_height, fps, seconds, max_gap)
     series.hip_knee_offset = smooth_series(series.hip_knee_offset, fps, seconds, max_gap)
+    series.left_hip_deg = smooth_series(series.left_hip_deg, fps, seconds, max_gap)
+    series.right_hip_deg = smooth_series(series.right_hip_deg, fps, seconds, max_gap)
+    series.left_ankle_deg = smooth_series(series.left_ankle_deg, fps, seconds, max_gap)
+    series.right_ankle_deg = smooth_series(series.right_ankle_deg, fps, seconds, max_gap)
+    series.left_knee_lateral = smooth_series(
+        series.left_knee_lateral, fps, seconds, max_gap
+    )
+    series.right_knee_lateral = smooth_series(
+        series.right_knee_lateral, fps, seconds, max_gap
+    )
 
 
 def unwrap_landmarks(series: PoseSeries) -> dict:

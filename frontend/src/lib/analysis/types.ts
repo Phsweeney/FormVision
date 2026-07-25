@@ -72,6 +72,23 @@ export const RIGHT_LEG_LANDMARKS: readonly number[] = [
 ];
 
 /**
+ * Everything the ankle angle needs, per side. Listed separately from the leg
+ * groups because the foot index is the one landmark the rest of the analysis
+ * never asks for: a frame cropped at the shins is still perfectly usable for
+ * depth and lean, so a missing toe must cost the ankle angle alone.
+ */
+export const LEFT_ANKLE_ANGLE_LANDMARKS: readonly number[] = [
+  PoseLandmarkIndex.LEFT_KNEE,
+  PoseLandmarkIndex.LEFT_ANKLE,
+  PoseLandmarkIndex.LEFT_FOOT_INDEX,
+];
+export const RIGHT_ANKLE_ANGLE_LANDMARKS: readonly number[] = [
+  PoseLandmarkIndex.RIGHT_KNEE,
+  PoseLandmarkIndex.RIGHT_ANKLE,
+  PoseLandmarkIndex.RIGHT_FOOT_INDEX,
+];
+
+/**
  * Pairs of landmark indices to connect when drawing a skeleton. Copied verbatim
  * from the backend, which declares them locally because MediaPipe 0.10.x no
  * longer exports `POSE_CONNECTIONS`.
@@ -145,6 +162,32 @@ export interface AngleSeries {
   torsoLeanDeg: Signal;
   hipHeight: Signal;
   hipKneeOffset: Signal;
+
+  /**
+   * Per-side hip angle (shoulder-hip-knee on that side's own landmarks).
+   * `hipDeg` above is the midpoint version and stays the primary signal; these
+   * exist so a left/right comparison is possible at the hip as well as the knee.
+   */
+  leftHipDeg: Signal;
+  rightHipDeg: Signal;
+
+  /**
+   * Ankle angle (knee-ankle-foot) per side, measuring shin-over-foot travel. A
+   * heel lifting off the floor shows up here as the angle opening out. Side-on
+   * only: front-on the foot points at the lens and the movement barely projects.
+   */
+  leftAnkleDeg: Signal;
+  rightAnkleDeg: Signal;
+
+  /**
+   * Knee displacement from that leg's own hip-to-ankle line, in torso lengths,
+   * signed so **positive means medial** — the knee travelling inward toward the
+   * midline, which is valgus. Front-on only: from the side the knee sits on that
+   * line by projection no matter what it is doing.
+   */
+  leftKneeLateral: Signal;
+  rightKneeLateral: Signal;
+
   valid: boolean[];
   leftLegValid: boolean[];
   rightLegValid: boolean[];

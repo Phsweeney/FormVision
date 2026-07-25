@@ -73,6 +73,22 @@ RIGHT_LEG_LANDMARKS: tuple[PoseLandmarkIndex, ...] = (
     PoseLandmarkIndex.RIGHT_ANKLE,
 )
 
+#: Everything the ankle angle needs, per side. Listed separately from the leg
+#: groups because the foot index is the one landmark the rest of the analysis
+#: never asks for: a frame cropped at the shins is still perfectly usable for
+#: depth and lean, so a missing toe must cost the ankle angle alone rather than
+#: invalidate the frame.
+LEFT_ANKLE_ANGLE_LANDMARKS: tuple[PoseLandmarkIndex, ...] = (
+    PoseLandmarkIndex.LEFT_KNEE,
+    PoseLandmarkIndex.LEFT_ANKLE,
+    PoseLandmarkIndex.LEFT_FOOT_INDEX,
+)
+RIGHT_ANKLE_ANGLE_LANDMARKS: tuple[PoseLandmarkIndex, ...] = (
+    PoseLandmarkIndex.RIGHT_KNEE,
+    PoseLandmarkIndex.RIGHT_ANKLE,
+    PoseLandmarkIndex.RIGHT_FOOT_INDEX,
+)
+
 #: Pairs of landmark indices to connect when drawing a skeleton.
 #: MediaPipe 0.10.35 removed `mp.solutions.pose.POSE_CONNECTIONS`, so the
 #: topology is declared here rather than imported.
@@ -237,6 +253,27 @@ class AngleSeries:
     hip_deg: list[float | None] = field(default_factory=list)
     torso_lean_deg: list[float | None] = field(default_factory=list)
 
+    #: Per-side hip angle (shoulder-hip-knee on that side's own landmarks).
+    #: `hip_deg` above is the midpoint version and stays the primary signal;
+    #: these exist so a left/right comparison is possible at the hip as well as
+    #: the knee, which is what an asymmetry judgement needs.
+    left_hip_deg: list[float | None] = field(default_factory=list)
+    right_hip_deg: list[float | None] = field(default_factory=list)
+
+    #: Ankle angle (knee-ankle-foot) per side, measuring shin-over-foot travel.
+    #: A heel lifting off the floor shows up here as the angle opening out.
+    #: Side-on only: filmed front-on the foot points at the lens, so the whole
+    #: movement projects to nothing and the number would be noise.
+    left_ankle_deg: list[float | None] = field(default_factory=list)
+    right_ankle_deg: list[float | None] = field(default_factory=list)
+
+    #: Knee displacement from that leg's own hip-to-ankle line, in torso
+    #: lengths, signed so that **positive means medial** — the knee travelling
+    #: inward toward the midline, which is valgus. Front-on only: from the side
+    #: the knee sits on that line by projection no matter what it is doing.
+    left_knee_lateral: list[float | None] = field(default_factory=list)
+    right_knee_lateral: list[float | None] = field(default_factory=list)
+
     #: Vertical hip position, in torso lengths above the ankles. Larger = more
     #: upright. Scale-normalised so it does not depend on camera distance.
     hip_height: list[float | None] = field(default_factory=list)
@@ -380,6 +417,19 @@ class Metrics:
     camera_view: ViewOrientation = ViewOrientation.UNKNOWN
 
 
+class FeedbackSource(StrEnum):
+    """Where a piece of feedback came from.
+
+    Carried in the type system rather than left to the wording, so the UI can
+    mark model-derived advice without pattern-matching on copy. A lifter being
+    told their knees cave deserves to know whether that came from a measurement
+    with a threshold on it or from a model's opinion.
+    """
+
+    RULE = "rule"
+    MODEL = "model"
+
+
 @dataclass(frozen=True, slots=True)
 class FeedbackItem:
     """One piece of coaching advice."""
@@ -389,6 +439,47 @@ class FeedbackItem:
     title: str
     message: str
     explanation: str
+
+    #: Defaults to RULE so every pre-existing rule keeps its behaviour without
+    #: being edited.
+    source: FeedbackSource = FeedbackSource.RULE
+
+    #: Model confidence, 0-1. None for rule-derived items, which are not
+    #: probabilistic and must not be dressed up as though they were.
+    confidence: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FaultPrediction:
+    """One model's verdict on one repetition.
+
+    Predictions are per-rep rather than per-set because that is the granularity
+    a lifter can act on: "your knees caved on reps 4 and 5" is coachable where
+    "your knees caved" is not.
+    """
+
+    fault_id: str
+    rep_index: int
+
+    #: Mean per-frame probability across the rep. Because the model is
+    #: calibrated, this reads as roughly the share of the rep showing the fault.
+    #: None when the rep could not be scored at all.
+    probability: float | None
+
+    #: Share of the rep's scored frames whose probability cleared `threshold`.
+    affected_fraction: float
+
+    #: The model's own operating threshold, chosen during training to hold a
+    #: precision target. Travels with the artifact because it is calibrated
+    #: against those particular weights and is meaningless beside any others.
+    threshold: float
+
+    #: Share of the detector's inputs that were actually measured, 0-1. A verdict
+    #: resting on features the camera could not see is not a verdict.
+    feature_completeness: float
+
+    #: Whether this rises to something worth telling the lifter.
+    fired: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,3 +492,8 @@ class AnalysisResult:
     metrics: Metrics
     feedback: tuple[FeedbackItem, ...]
     estimator_name: str
+
+    #: Model output, empty when the ML layer is disabled or has no artifact.
+    #: Defaulted so constructing a result without it stays valid, which is what
+    #: keeps every existing test and code path working unchanged.
+    predictions: tuple[FaultPrediction, ...] = ()

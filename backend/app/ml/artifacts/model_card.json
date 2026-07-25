@@ -1,0 +1,107 @@
+{
+  "created_utc": "2026-07-24T23:15:15.310262+00:00",
+  "sklearn_version": "1.7.2",
+  "corpus": {
+    "path": "squat_features_augmented.csv",
+    "sha256": "d29a7d0bbce4df5f71a196a1a61c23bc1cf23168c311ad6e98e626039540c5fa",
+    "rows": 47442,
+    "videos": [
+      "co1.mp4",
+      "co10.mp4",
+      "co11.mp4",
+      "co12.mp4",
+      "co13.mp4",
+      "co14.mp4",
+      "co15.mp4",
+      "co2.mp4",
+      "co3.mp4",
+      "co4.mp4",
+      "co5.mp4",
+      "co6.mp4",
+      "co7.mp4",
+      "co8.mp4",
+      "co9.mp4"
+    ],
+    "excluded_columns": {
+      "spine_angle": "Exact duplicate of left_hip_angle; the augmentation perturbs one but not the other, so their difference identifies the label group exactly.",
+      "symmetry_score": "Never recomputed after perturbation, so the asymmetric class carries the correct frame's symmetry score."
+    }
+  },
+  "policy": {
+    "n_splits": 5,
+    "grouped_by": "video_file",
+    "target_false_positive_rate": 0.02,
+    "min_auc": 0.7
+  },
+  "faults": [
+    {
+      "fault": "knee_valgus",
+      "estimator": "gradient_boosting",
+      "roc_auc": 0.9878,
+      "average_precision": 0.9907,
+      "threshold": 0.6871,
+      "precision_at_threshold": 0.9785,
+      "recall_at_threshold": 0.9283,
+      "positives": 7907,
+      "negatives": 7907,
+      "shippable": true
+    },
+    {
+      "fault": "heel_lift",
+      "estimator": "logistic",
+      "roc_auc": 0.9209,
+      "average_precision": 0.8793,
+      "threshold": 0.9476,
+      "precision_at_threshold": 0.8611,
+      "recall_at_threshold": 0.1757,
+      "positives": 7907,
+      "negatives": 7907,
+      "shippable": true
+    },
+    {
+      "fault": "asymmetry",
+      "estimator": "gradient_boosting",
+      "roc_auc": 0.7848,
+      "average_precision": 0.7894,
+      "threshold": 0.875,
+      "precision_at_threshold": 0.9116,
+      "recall_at_threshold": 0.2099,
+      "positives": 7907,
+      "negatives": 7907,
+      "shippable": true
+    },
+    {
+      "fault": "shallow",
+      "estimator": "gradient_boosting",
+      "roc_auc": 0.9176,
+      "average_precision": 0.9318,
+      "threshold": 0.8378,
+      "precision_at_threshold": 0.9653,
+      "recall_at_threshold": 0.6019,
+      "positives": 7907,
+      "negatives": 7907,
+      "shippable": true
+    },
+    {
+      "fault": "forward_lean",
+      "estimator": "gradient_boosting",
+      "roc_auc": 0.8094,
+      "average_precision": 0.837,
+      "threshold": 0.7496,
+      "precision_at_threshold": 0.9523,
+      "recall_at_threshold": 0.4163,
+      "positives": 7907,
+      "negatives": 7907,
+      "shippable": true
+    }
+  ],
+  "shipped": [
+    "asymmetry",
+    "heel_lift",
+    "knee_valgus"
+  ],
+  "trained_not_shipped": [
+    "forward_lean",
+    "shallow"
+  ]
+}
