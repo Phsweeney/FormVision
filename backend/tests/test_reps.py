@@ -11,7 +11,7 @@ import pytest
 
 from app.analysis.angles import compute_angles
 from app.analysis.reps import detect_reps
-from app.analysis.types import ViewOrientation
+from app.analysis.types import AngleSeries, ViewOrientation
 from app.config import Settings
 from tests.synthetic import build_squat_series, build_standing_series
 
@@ -253,3 +253,48 @@ class TestRobustness:
     def test_stricter_descent_fraction_still_counts_full_reps(self, settings):
         settings.rep_descent_fraction = 0.8
         assert count_reps(build_squat_series(reps=3, depth_fraction=1.0), settings) == 3
+
+
+class TestTurnaroundBand:
+    """Hysteresis on the bottom of a rep.
+
+    The hip signal is flattest at the turnaround, so without a band any upward
+    flicker flips descending to ascending and any downward one flips it back.
+    On live footage that made the phase readout oscillate several times per rep.
+    Same idea as the gap between the descend and ascend thresholds, applied to
+    the other transition.
+    """
+
+    def _scan_states(self, signal, band):
+        """Frames at which the scan emits a rep, for a hand-built signal."""
+        from app.analysis.reps import _scan
+
+        angles = AngleSeries(
+            timestamps_s=[i / 30.0 for i in range(len(signal))],
+            hip_height=list(signal),
+        )
+        return _scan(signal, angles, 0.7, 0.9, band)
+
+    def test_a_wobble_at_the_bottom_does_not_split_a_rep(self):
+        # Descend, wobble by 0.01 around the bottom, then stand up.
+        signal = [1.0, 0.8, 0.6, 0.5, 0.51, 0.5, 0.505, 0.5, 0.52, 0.7, 0.95, 1.0]
+        assert len(self._scan_states(signal, 0.04)) == 1
+
+    def test_a_real_dip_still_reopens_the_descent(self):
+        # A genuine second dip, far larger than the band, must not be absorbed.
+        signal = [1.0, 0.8, 0.6, 0.5, 0.7, 0.4, 0.7, 0.95, 1.0]
+        triples = self._scan_states(signal, 0.04)
+        assert len(triples) == 1
+        # The bottom is the deeper of the two dips, not the first one.
+        assert triples[0][1] == 5
+
+    def test_the_band_defaults_to_off(self):
+        from app.analysis.reps import _scan
+
+        signal = [1.0, 0.8, 0.5, 0.6, 0.95, 1.0]
+        angles = AngleSeries(
+            timestamps_s=[i / 30.0 for i in range(len(signal))],
+            hip_height=list(signal),
+        )
+        # Kept so existing callers and parity fixtures are unaffected.
+        assert len(_scan(signal, angles, 0.7, 0.9)) == 1

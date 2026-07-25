@@ -41,9 +41,18 @@ export class RepStateMachine {
   private bottomValue = Infinity;
   private lastStandingFrame = 0;
 
+  /**
+   * @param turnaroundBand How far the hip must reverse, in torso lengths,
+   *   before the bottom counts as passed. Hysteresis, for the same reason the
+   *   descend and ascend thresholds are separated: the signal is nearly flat at
+   *   the bottom of a rep, so reacting to any flicker makes the phase oscillate
+   *   on real tracking noise. Defaults to zero so existing callers and the
+   *   parity tests keep their exact previous behaviour.
+   */
   constructor(
     private descendThreshold: number,
     private ascendThreshold: number,
+    private readonly turnaroundBand = 0,
   ) {}
 
   /** Update the thresholds mid-stream (the live driver adapts them per rep). */
@@ -76,7 +85,7 @@ export class RepStateMachine {
       if (value < this.bottomValue) {
         this.bottomValue = value;
         this.bottomFrame = index;
-      } else if (value > this.bottomValue) {
+      } else if (value > this.bottomValue + this.turnaroundBand) {
         // The hip has started back up: the bottom is behind us.
         this.state = "ascending";
       }
@@ -84,8 +93,9 @@ export class RepStateMachine {
     }
 
     // ascending
-    if (value < this.bottomValue) {
-      // Dipped again before locking out — still the same descent.
+    if (value < this.bottomValue - this.turnaroundBand) {
+      // Dipped again before locking out, so still the same descent. The band
+      // keeps a noisy sample from reopening a descent that is genuinely over.
       this.bottomValue = value;
       this.bottomFrame = index;
       this.state = "descending";
@@ -121,7 +131,7 @@ export function detectReps(angles: AngleSeries, config: AnalysisConfig): Rep[] {
   const descend = baseline - config.rep_descent_fraction * travel;
   const ascend = baseline - config.rep_ascent_fraction * travel;
 
-  const machine = new RepStateMachine(descend, ascend);
+  const machine = new RepStateMachine(descend, ascend, config.rep_turnaround_band);
   const triples: RepTriple[] = [];
   signal.forEach((value, index) => {
     const triple = machine.push(index, value);

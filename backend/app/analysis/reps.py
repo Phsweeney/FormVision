@@ -71,7 +71,13 @@ def detect_reps(angles: AngleSeries, settings: Settings) -> list[Rep]:
     descend_threshold = baseline - settings.rep_descent_fraction * travel
     ascend_threshold = baseline - settings.rep_ascent_fraction * travel
 
-    candidates = _scan(signal, angles, descend_threshold, ascend_threshold)
+    candidates = _scan(
+        signal,
+        angles,
+        descend_threshold,
+        ascend_threshold,
+        settings.rep_turnaround_band,
+    )
     reps = _finalise(candidates, angles, settings)
 
     logger.info(
@@ -89,6 +95,7 @@ def _scan(
     angles: AngleSeries,
     descend_threshold: float,
     ascend_threshold: float,
+    turnaround_band: float = 0.0,
 ) -> list[tuple[int, int, int]]:
     """Walk the signal and emit ``(start, bottom, end)`` frame triples.
 
@@ -98,8 +105,11 @@ def _scan(
       The rep's *start* is backdated to when the hip last left the standing
       band, so the recorded descent includes the whole movement rather than
       only the part below the threshold.
-    - **DESCENDING** -> ASCENDING once the hip begins rising again, tracked by
-      remembering the lowest point seen.
+    - **DESCENDING** -> ASCENDING once the hip has risen ``turnaround_band``
+      above the lowest point seen. The band is hysteresis, for the same reason
+      the descent and ascent thresholds are separated: the hip signal is nearly
+      flat at the bottom of a rep, so reacting to any upward flicker at all
+      makes the state oscillate on real tracking noise.
     - **ASCENDING** -> STANDING once the hip rises back above
       ``ascend_threshold``, which closes the rep.
 
@@ -133,14 +143,16 @@ def _scan(
             if value < bottom_value:
                 bottom_value = value
                 bottom_frame = index
-            elif value > bottom_value:
+            elif value > bottom_value + turnaround_band:
                 # The hip has started back up: the bottom is behind us.
                 state = _State.ASCENDING
 
         elif state is _State.ASCENDING:
-            if value < bottom_value:
-                # Dipped again before locking out — treat it as still the same
+            if value < bottom_value - turnaround_band:
+                # Dipped again before locking out: treat it as still the same
                 # descent rather than closing a rep the lifter has not finished.
+                # The band keeps a noisy sample from reopening a descent that
+                # is genuinely over.
                 bottom_value = value
                 bottom_frame = index
                 state = _State.DESCENDING

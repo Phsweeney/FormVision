@@ -167,6 +167,20 @@ class Settings(BaseSettings):
             "being amplified into phantom repetitions."
         ),
     )
+    rep_turnaround_band: float = Field(
+        default=0.04,
+        description=(
+            "How far the hip must reverse, in torso lengths, before the bottom "
+            "of a rep counts as passed. This is the hysteresis on the "
+            "descending-to-ascending transition, and it exists for the same "
+            "reason as the gap between the descent and ascent fractions. "
+            "Without it any upward flicker at all flips the state, and the hip "
+            "signal is close to flat at the bottom of a rep, so tracking noise "
+            "makes the phase oscillate. An absolute value rather than a "
+            "fraction because the noise it rejects is absolute, and hip height "
+            "is already normalised by torso length."
+        ),
+    )
     min_rep_duration_s: float = Field(
         default=0.40,
         description="Reps faster than this are treated as tracking jitter.",

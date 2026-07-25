@@ -340,7 +340,11 @@ export class LiveAnalyzer {
     this.classifier = this.models ? new LiveClassifier(this.models) : null;
 
     const { descend, ascend } = this.thresholds();
-    this.machine = new RepStateMachine(descend, ascend);
+    this.machine = new RepStateMachine(
+      descend,
+      ascend,
+      this.config.rep_turnaround_band,
+    );
     this.buffer = emptySeries(this.view);
     this.liveIndex = 0;
     this.calibrating = false;

@@ -24,6 +24,8 @@ export interface AnalysisConfig {
   rep_descent_fraction: number;
   rep_ascent_fraction: number;
   min_rep_range: number;
+  /** Hysteresis on the bottom of a rep, in torso lengths. */
+  rep_turnaround_band: number;
   min_rep_duration_s: number;
   // Signal processing
   smoothing_window_seconds: number;
@@ -52,6 +54,7 @@ export const DEFAULT_CONFIG: AnalysisConfig = {
   rep_descent_fraction: 0.6,
   rep_ascent_fraction: 0.25,
   min_rep_range: 0.15,
+  rep_turnaround_band: 0.04,
   min_rep_duration_s: 0.4,
   smoothing_window_seconds: 0.15,
   max_interpolation_gap_frames: 5,

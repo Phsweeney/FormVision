@@ -30,6 +30,7 @@ class ConfigResponse(BaseModel):
     rep_descent_fraction: float
     rep_ascent_fraction: float
     min_rep_range: float
+    rep_turnaround_band: float
     min_rep_duration_s: float
 
     # -- Signal processing ---------------------------------------------------
