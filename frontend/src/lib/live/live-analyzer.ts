@@ -452,14 +452,32 @@ export class LiveAnalyzer {
     appendFrameAngles(this.buffer, smoothed);
 
     // Bottom reference: the deepest point of the *current* descent. While the
-    // lifter is standing it is pinned to the baseline, so each rep re-derives
-    // its own depth from scratch. This is deliberately not a session-long
-    // running minimum: one glitch frame (a tracking blip that briefly puts the
-    // hip below the ankle, i.e. a spuriously low hip height) would otherwise
-    // ratchet it down permanently, blow the descend threshold below anything
-    // reachable, and silently kill rep detection for the rest of the session.
-    // Flooring at zero guards against that same negative-glitch case within a rep.
-    if (this.machine!.phase === "standing") this.bottomReference = this.baseline;
+    // lifter is standing it is pinned to a reference depth, so each rep
+    // re-derives its own depth from scratch. This is deliberately not a
+    // session-long running minimum: one glitch frame (a tracking blip that
+    // briefly puts the hip below the ankle, i.e. a spuriously low hip height)
+    // would otherwise ratchet it down permanently, blow the descend threshold
+    // below anything reachable, and silently kill rep detection for the rest of
+    // the session. Flooring at zero guards against that same case within a rep.
+    //
+    // The collapse waits until the hip is genuinely back up, and that wait is
+    // what stops every rep being counted twice. A rep closes when the hip
+    // crosses `baseline - 0.25 * travel`, which is well short of upright.
+    // Collapsing the reference there took `travel` down to `min_rep_range`,
+    // which yanked the descend threshold up from around `baseline - 0.48` to
+    // `baseline - 0.09`, above where the hip actually was. The machine
+    // re-entered a descent on the spot and the rest of the ascent tripped a
+    // second rep. It only showed on slow reps, because the phantom has to
+    // outlast `min_rep_duration_s` to survive the filter.
+    //
+    // `settled` is deliberately the same threshold the collapse produces, so
+    // the collapse can never itself start a descent: the hip is already above
+    // the new descend threshold before that threshold exists.
+    if (this.machine!.phase === "standing") {
+      const settled =
+        this.baseline - this.config.rep_descent_fraction * this.config.min_rep_range;
+      if (hip !== null && hip >= settled) this.bottomReference = this.baseline;
+    }
     if (hip !== null && hip < this.bottomReference) this.bottomReference = hip;
     this.bottomReference = Math.max(this.bottomReference, 0);
     const { descend, ascend } = this.thresholds();
